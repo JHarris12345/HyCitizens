@@ -29,7 +29,7 @@ public class HyCitizensPlugin extends JavaPlugin {
     @Override
     protected void setup() {
         // Initialize config manager
-        this.configManager = new ConfigManager(Paths.get("mods", "CitizensData"));
+        this.configManager = new ConfigManager(Paths.get("mods", "HyCitizensData"));
         this.citizensManager = new CitizensManager(this);
         this.citizensUI = new CitizensUI(this);
 

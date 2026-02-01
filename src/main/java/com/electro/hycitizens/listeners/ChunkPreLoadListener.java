@@ -14,6 +14,7 @@ import com.hypixel.hytale.server.core.universe.world.storage.ChunkStore;
 import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 
 import javax.annotation.Nonnull;
+import java.util.UUID;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -98,7 +99,17 @@ public class ChunkPreLoadListener {
                             }
                         }
 
-                        if (world.getEntityRef(citizen.getHologramUUID()) == null) {
+                        boolean shouldSpawnHologram = citizen.getHologramLineUuids() == null || citizen.getHologramLineUuids().isEmpty();
+                        if (!shouldSpawnHologram) {
+                            for (UUID uuid : citizen.getHologramLineUuids()) {
+                                if (uuid == null || world.getEntityRef(uuid) == null) {
+                                    shouldSpawnHologram = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (shouldSpawnHologram) {
                             plugin.getCitizensManager().spawnCitizenHologram(citizen, true);
                         }
                     }
@@ -132,7 +143,17 @@ public class ChunkPreLoadListener {
                         }
                     }
 
-                    if (world.getEntityRef(citizen.getHologramUUID()) == null) {
+                    boolean shouldSpawnHologram = citizen.getHologramLineUuids() == null || citizen.getHologramLineUuids().isEmpty();
+                    if (!shouldSpawnHologram) {
+                        for (UUID uuid : citizen.getHologramLineUuids()) {
+                            if (uuid == null || world.getEntityRef(uuid) == null) {
+                                shouldSpawnHologram = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (shouldSpawnHologram) {
                         plugin.getCitizensManager().spawnCitizenHologram(citizen, true);
                     }
                 });

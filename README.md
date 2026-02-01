@@ -4,8 +4,6 @@
 [![Star on GitHub](https://img.shields.io/badge/GitHub-Source-181717?logo=github&logoColor=white&style=for-the-badge)](https://github.com/ElectroGamesDev/HyCitizens)
 [![Support me on Ko-fi](https://img.shields.io/badge/Ko--fi-Support-FF0000?logo=kofi&logoColor=white&style=for-the-badge)](https://ko-fi.com/electrogames)
 
-
-
 **HyCitizens** is a full in-game NPC (Citizen) management plugin that allows you to create interactive NPCs for your server.  
 Everything can be configured directly in-game through a clean UI, with an optional developer API for full control and integration.
 
@@ -91,6 +89,7 @@ Citizens are stored automatically and restored when the server restarts.
 If you would like to join the community, suggest features, report bugs, or need some help, join the Discord community! [https://discord.gg/Snqz9E58Dr](https://discord.gg/Snqz9E58Dr)
 
 ***
+
 ## Support HyCitizens
 
 Want to support HyCitizens? You can donate at [Ko-fi](https://ko-fi.com/electrogames) or share HyCitizens with your friends!
@@ -131,7 +130,7 @@ noPermissionMessage (String) – message shown if missing permission.
 worldUUID (UUID) – UUID of the world the Citizen belongs to.
 commandActions (List<CommandAction>) – commands to run on interaction.
 spawnedUUID (UUID) – spawned NPC entity UUID (if spawned).
-hologramUUID (UUID) – spawned hologram UUID (if spawned).
+hologramLineUuids (List<UUID>) – spawned hologram UUIDs (if spawned).
 npcRef (Ref<EntityStore>) – reference to the NPC entity store.
 lastLookDirections (Map<UUID, Direction>) – tracks the last look direction of players interacting with the Citizen.
 rotateTowardsPlayer (boolean) – whether the Citizen always looks at players.
@@ -149,6 +148,7 @@ skinUsername (String) – username used to fetch skins from PlayerDB.
 cachedSkin (PlayerSkin) – stored skin data for this Citizen.
 lastSkinUpdate (long) – timestamp of the last skin update.
 createdAt (transient long) – timestamp of when the Citizen was created (not serialized).
+fKeyInteractionEnabled (boolean) – whether players can interact with the Citizen using the "F" key.
 ```
 
 ## Creating a Citizen
@@ -163,7 +163,7 @@ CitizenData citizen = new CitizenData(
         new Vector3f(0, 0, 0), // Rotation
         1.0f, // Scale
         null, // NPC UUID - You should usually set this as null
-        null, // Hologram UUID - You should usually set this as null
+        new ArrayList<>(), // Hologram UUIDs - You should usually leave this empty
         "", // Required Permission
         "", // No Permission Message - Leaving it empty sets a default message
         List.of(), // Command actions
@@ -309,6 +309,7 @@ manager.updateCitizenSkinFromPlayer(citizen, playerRef, true); // true = save to
 ```
 
 Get a citizen's player skin:
+
 ```
 manager.determineSkin(citizen)
 ```
@@ -362,21 +363,32 @@ citizen.getNpcOffHand();
 citizen.setNpcOffHand("Weapon_Shield_Adamantite");
 ```
 
-**Important:** These changes **do not automatically save and apply**.
-<br>
+**Important:** These changes **do not automatically save and apply**.  
 You must call the following to apply the items to an existing citizen:
+
 ```
 manager.updateCitizenNPCItems(citizen); // or manager.updateCitizen(citizen)
 ```
 
 You must call the following to save the items to storage:
+
 ```
 manager.saveCitizen(citizen);
+```
+
+### "F" Key Interaction
+
+To get or set "F" key interactions:
+
+```
+boolean fKeyInteractions = getFKeyInteractionEnabled();
+citizen.setFKeyInteractionEnabled(true);
 ```
 
 ## Other Nametag Settings
 
 Hide or adjust the Citizen’s nametag:
+
 ```
 citizen.setHideNametag(true);
 boolean hidden = citizen.isHideNametag();

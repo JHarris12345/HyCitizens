@@ -27,12 +27,13 @@ public class CitizenData {
     private UUID worldUUID;
     private List<CommandAction> commandActions;
     private UUID spawnedUUID;
-    private UUID hologramUUID;
+    private List<UUID> hologramLineUuids = new ArrayList<>();
     private Ref<EntityStore> npcRef;
     public final Map<UUID, Direction> lastLookDirections = new ConcurrentHashMap<>();
     private boolean rotateTowardsPlayer;
     private boolean hideNametag = false;
     private float nametagOffset;
+    private boolean fKeyInteractionEnabled;
 
     // Item-related fields
     private String npcHelmet;
@@ -52,7 +53,7 @@ public class CitizenData {
 
     public CitizenData(@Nonnull String id, @Nonnull String name, @Nonnull String modelId, @Nonnull UUID worldUUID,
                        @Nonnull Vector3d position, @Nonnull Vector3f rotation, float scale, @Nullable UUID npcUUID,
-                       @Nullable UUID hologramUUID, @Nonnull String requiredPermission, @Nonnull String noPermissionMessage,
+                       @Nullable List<UUID> hologramLineUuids, @Nonnull String requiredPermission, @Nonnull String noPermissionMessage,
                        @Nonnull List<CommandAction> commandActions, boolean isPlayerModel, boolean useLiveSkin,
                        @Nullable String skinUsername, @Nullable PlayerSkin cachedSkin, long lastSkinUpdate,
                        boolean rotateTowardsPlayer) {
@@ -67,7 +68,7 @@ public class CitizenData {
         this.noPermissionMessage = noPermissionMessage;
         this.commandActions = new ArrayList<>(commandActions);
         this.spawnedUUID = npcUUID;
-        this.hologramUUID = hologramUUID;
+        this.hologramLineUuids = hologramLineUuids;
         this.isPlayerModel = isPlayerModel;
         this.useLiveSkin = useLiveSkin;
         this.skinUsername = skinUsername != null ? skinUsername : "";
@@ -86,6 +87,8 @@ public class CitizenData {
 
         this.nametagOffset = 0;
         this.hideNametag = false;
+
+        this.fKeyInteractionEnabled = false;
     }
 
     @Nonnull
@@ -181,12 +184,12 @@ public class CitizenData {
         return spawnedUUID;
     }
 
-    public void setHologramUUID(UUID  hologramUUID) {
-        this.hologramUUID = hologramUUID;
+    public List<UUID> getHologramLineUuids() {
+        return hologramLineUuids;
     }
 
-    public UUID getHologramUUID() {
-        return hologramUUID;
+    public void setHologramLineUuids(@Nullable List<UUID> hologramLineUuids) {
+        this.hologramLineUuids = hologramLineUuids;
     }
 
     public boolean requiresPermission() {
@@ -325,5 +328,13 @@ public class CitizenData {
 
     public void setCreatedAt(long createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public void setFKeyInteractionEnabled(boolean enabled) {
+        this.fKeyInteractionEnabled = enabled;
+    }
+
+    public boolean getFKeyInteractionEnabled() {
+        return fKeyInteractionEnabled;
     }
 }

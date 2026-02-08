@@ -15,6 +15,8 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+import static com.hypixel.hytale.logger.HytaleLogger.getLogger;
+
 public class CitizenData {
     private final String id;
     private String name;
@@ -32,6 +34,7 @@ public class CitizenData {
     public final Map<UUID, Direction> lastLookDirections = new ConcurrentHashMap<>();
     private boolean rotateTowardsPlayer;
     private boolean hideNametag = false;
+    private boolean hideNpc = false;
     private float nametagOffset;
     private boolean fKeyInteractionEnabled;
 
@@ -50,6 +53,28 @@ public class CitizenData {
     private PlayerSkin cachedSkin;
     private long lastSkinUpdate;
     private transient long createdAt;
+
+    // Behavior fields
+    private List<AnimationBehavior> animationBehaviors = new ArrayList<>();
+    private MovementBehavior movementBehavior = new MovementBehavior();
+    private MessagesConfig messagesConfig = new MessagesConfig();
+    private transient Map<UUID, Integer> sequentialMessageIndex = new ConcurrentHashMap<>();
+    private transient Map<UUID, Boolean> playersInProximity = new ConcurrentHashMap<>();
+    private transient Map<String, Long> lastTimedAnimationPlay = new ConcurrentHashMap<>();
+    private transient Map<String, java.util.concurrent.ScheduledFuture<?>> animationStopTasks = new ConcurrentHashMap<>();
+
+    // Attitude and damage fields
+    private String attitude = "PASSIVE";
+    private boolean takesDamage = false;
+
+    // Respawn fields
+    private boolean respawnOnDeath = true;
+    private float respawnDelaySeconds = 5.0f;
+    private transient boolean awaitingRespawn = false;
+    private transient long lastDeathTime = 0;
+
+    // Group field
+    private String group = "";
 
     public CitizenData(@Nonnull String id, @Nonnull String name, @Nonnull String modelId, @Nonnull UUID worldUUID,
                        @Nonnull Vector3d position, @Nonnull Vector3f rotation, float scale, @Nullable UUID npcUUID,
@@ -297,6 +322,14 @@ public class CitizenData {
         return hideNametag;
     }
 
+    public void setHideNpc(boolean hideNpc) {
+        this.hideNpc = hideNpc;
+    }
+
+    public boolean isHideNpc() {
+        return hideNpc;
+    }
+
     public void setNametagOffset(float offset) {
         this.nametagOffset = offset;
     }
@@ -336,5 +369,110 @@ public class CitizenData {
 
     public boolean getFKeyInteractionEnabled() {
         return fKeyInteractionEnabled;
+    }
+
+    @Nonnull
+    public List<AnimationBehavior> getAnimationBehaviors() {
+        return new ArrayList<>(animationBehaviors);
+    }
+
+    public void setAnimationBehaviors(@Nonnull List<AnimationBehavior> animationBehaviors) {
+        this.animationBehaviors = new ArrayList<>(animationBehaviors);
+    }
+
+    @Nonnull
+    public MovementBehavior getMovementBehavior() {
+        return movementBehavior;
+    }
+
+    public void setMovementBehavior(@Nonnull MovementBehavior movementBehavior) {
+        this.movementBehavior = movementBehavior;
+    }
+
+    @Nonnull
+    public MessagesConfig getMessagesConfig() {
+        return messagesConfig;
+    }
+
+    public void setMessagesConfig(@Nonnull MessagesConfig messagesConfig) {
+        this.messagesConfig = messagesConfig;
+    }
+
+    @Nonnull
+    public Map<UUID, Integer> getSequentialMessageIndex() {
+        return sequentialMessageIndex;
+    }
+
+    @Nonnull
+    public Map<UUID, Boolean> getPlayersInProximity() {
+        return playersInProximity;
+    }
+
+    @Nonnull
+    public Map<String, Long> getLastTimedAnimationPlay() {
+        return lastTimedAnimationPlay;
+    }
+
+    @Nonnull
+    public Map<String, java.util.concurrent.ScheduledFuture<?>> getAnimationStopTasks() {
+        return animationStopTasks;
+    }
+
+    @Nonnull
+    public String getAttitude() {
+        return attitude;
+    }
+
+    public void setAttitude(@Nonnull String attitude) {
+        this.attitude = attitude;
+    }
+
+    public boolean isTakesDamage() {
+        return takesDamage;
+    }
+
+    public void setTakesDamage(boolean takesDamage) {
+        this.takesDamage = takesDamage;
+    }
+
+    public boolean isRespawnOnDeath() {
+        return respawnOnDeath;
+    }
+
+    public void setRespawnOnDeath(boolean respawnOnDeath) {
+        this.respawnOnDeath = respawnOnDeath;
+    }
+
+    public float getRespawnDelaySeconds() {
+        return respawnDelaySeconds;
+    }
+
+    public void setRespawnDelaySeconds(float respawnDelaySeconds) {
+        this.respawnDelaySeconds = respawnDelaySeconds;
+    }
+
+    public boolean isAwaitingRespawn() {
+        return awaitingRespawn;
+    }
+
+    public void setAwaitingRespawn(boolean awaitingRespawn) {
+        this.awaitingRespawn = awaitingRespawn;
+    }
+
+    public long getLastDeathTime() {
+        return lastDeathTime;
+    }
+
+    public void setLastDeathTime(long lastDeathTime) {
+        this.lastDeathTime = lastDeathTime;
+    }
+
+    @Nonnull
+    public String getGroup() {
+        return group;
+    }
+
+    public void setGroup(@Nullable String group) {
+        this.group = group != null ? group : "";
     }
 }

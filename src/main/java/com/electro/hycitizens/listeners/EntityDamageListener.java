@@ -18,16 +18,21 @@ import com.hypixel.hytale.server.core.console.ConsoleSender;
 import com.hypixel.hytale.server.core.entity.UUIDComponent;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.entity.knockback.KnockbackComponent;
+import com.hypixel.hytale.server.core.modules.entity.component.ModelComponent;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.modules.entity.damage.Damage;
 import com.hypixel.hytale.server.core.modules.entity.damage.DamageEventSystem;
 import com.hypixel.hytale.server.core.modules.entity.damage.DamageModule;
 import com.hypixel.hytale.server.core.modules.entity.tracker.NetworkId;
+import com.hypixel.hytale.server.core.modules.entitystats.EntityStatMap;
+import com.hypixel.hytale.server.core.modules.entitystats.EntityStatsModule;
+import com.hypixel.hytale.server.core.modules.entitystats.asset.DefaultEntityStatTypes;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.server.npc.entities.NPCEntity;
+import com.hypixel.hytale.server.npc.sensorinfo.EntityPositionProvider;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -92,32 +97,65 @@ public class EntityDamageListener extends DamageEventSystem {
             if (!citizen.getSpawnedUUID().equals(uuidComponent.getUuid()))
                 continue;
 
-            event.setCancelled(true);
-            event.setAmount(0);
-            World world = Universe.get().getWorld(citizen.getWorldUUID());
+            // Passive citizens always cancel damage - they never enter combat
+            boolean cancelDamage = !citizen.isTakesDamage() || "PASSIVE".equals(citizen.getAttitude());
 
-            // Prevent knockback. This isn't a good solution, but I couldn't find a better way to handle this
-            TransformComponent transformComponent = store.getComponent(targetRef, TransformComponent.getComponentType());
-            if (transformComponent != null && world != null) {
-                Vector3d lockedPosition = new Vector3d(transformComponent.getPosition());
-
-                ScheduledFuture<?> lockTask = HytaleServer.SCHEDULED_EXECUTOR.scheduleAtFixedRate(() -> {
-                    if (!targetRef.isValid()) {
-                        return;
-                    }
-
-                    Vector3d currentPosition = transformComponent.getPosition();
-                    if (!currentPosition.equals(lockedPosition)) {
-                        transformComponent.setPosition(lockedPosition);
-                    }
-                }, 0, 20, TimeUnit.MILLISECONDS);
-
-                HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
-                    lockTask.cancel(false);
-                }, 1500, TimeUnit.MILLISECONDS);
-            }
+            // Trigger ON_ATTACK animations regardless of damage setting
+            HyCitizensPlugin.get().getCitizensManager().triggerAnimations(citizen, "ON_ATTACK");
 
             CitizenInteraction.handleInteraction(citizen, attackerPlayerRef);
+
+            if (cancelDamage) {
+                event.setCancelled(true);
+                event.setAmount(0);
+                World world = Universe.get().getWorld(citizen.getWorldUUID());
+                if (world != null) {
+                    // Prevent knockback
+                    world.execute(() -> {
+                        store.removeComponentIfExists(targetRef, KnockbackComponent.getComponentType());
+                    });
+                }
+            }
+            else {
+                // Check if the citizen will die from this damage
+                EntityStatMap statMap = store.getComponent(targetRef, EntityStatsModule.get().getEntityStatMapComponentType());
+                if (statMap == null) {
+                    return;
+                }
+
+                float currentHealth = statMap.get(DefaultEntityStatTypes.getHealth()).get();
+                float damageAmount = event.getAmount();
+
+                if (currentHealth - damageAmount <= 0) {
+                    long now = System.currentTimeMillis();
+
+                    if (!citizen.isAwaitingRespawn()) {
+                        citizen.setLastDeathTime(now);
+
+                        // Despawn nametag
+                        plugin.getCitizensManager().despawnCitizenHologram(citizen);
+
+                        citizen.setSpawnedUUID(null);
+                        citizen.setNpcRef(null);
+
+                        // Mark for respawn
+                        if (citizen.isRespawnOnDeath()) {
+                            citizen.setAwaitingRespawn(true);
+
+                            HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
+                                World world = Universe.get().getWorld(citizen.getWorldUUID());
+                                if (world == null)
+                                    return;
+
+                                citizen.setAwaitingRespawn(false);
+                                world.execute(() -> {
+                                    plugin.getCitizensManager().spawnCitizen(citizen, true);
+                                });
+                            }, (long)(citizen.getRespawnDelaySeconds() * 1000), TimeUnit.MILLISECONDS);
+                        }
+                    }
+                }
+            }
 
             break;
         }

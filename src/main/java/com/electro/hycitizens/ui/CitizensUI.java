@@ -214,7 +214,7 @@ public class CitizensUI {
                 
                     .section-description {
                         color: #8b949e;
-                        font-size: 11;
+                        font-size: 12;
                         padding-top: 4;
                         padding-bottom: 12;
                     }
@@ -419,7 +419,7 @@ public class CitizensUI {
                 
                     .list-item-subtitle {
                         color: #8b949e;
-                        font-size: 11;
+                        font-size: 12;
                         padding-top: 2;
                     }
                 
@@ -455,7 +455,7 @@ public class CitizensUI {
                 
                     .stat-label {
                         color: #8b949e;
-                        font-size: 11;
+                        font-size: 12;
                         padding-top: 2;
                     }
                 
@@ -504,7 +504,7 @@ public class CitizensUI {
                 
                     .info-box-text {
                         color: #8b949e;
-                        font-size: 11;
+                        font-size: 12;
                         flex-weight: 1;
                     }
                 
@@ -1686,9 +1686,9 @@ public class CitizensUI {
                                 <!-- Help Info -->
                                 <div class="card">
                                     <div class="card-body">
-                                        <p style="color: #8b949e; font-size: 11;"><span style="color: #58a6ff;">Variables:</span> Use {PlayerName} for player's name, {CitizenName} for citizen's name</p>
+                                        <p style="color: #8b949e; font-size: 12;"><span style="color: #58a6ff;">Variables:</span> Use {PlayerName} for player's name, {CitizenName} for citizen's name</p>
                                         <div class="spacer-xs"></div>
-                                        <p style="color: #8b949e; font-size: 11;">Commands run as <span style="color: #58a6ff;">PLAYER</span> by default. Click toggle to run as <span style="color: #a371f7;">SERVER</span>.</p>
+                                        <p style="color: #8b949e; font-size: 12;">Commands run as <span style="color: #58a6ff;">PLAYER</span> by default. Click toggle to run as <span style="color: #a371f7;">SERVER</span>.</p>
                                     </div>
                                 </div>
                             </div>
@@ -1946,10 +1946,6 @@ public class CitizensUI {
                 useLiveSkin[0] = ctx.getValue("live-skin-check", Boolean.class).orElse(false);
             });
 
-            page.addEventListener("rotate-towards-player", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
-                rotateTowardsPlayer[0] = ctx.getValue("rotate-towards-player", Boolean.class).orElse(true);
-            });
-
             page.addEventListener("get-player-skin-btn", CustomUIEventBindingType.Activating, event -> {
                 skinUsername[0] = playerRef.getUsername();
                 cachedSkin[0] = null;
@@ -1967,6 +1963,10 @@ public class CitizensUI {
                 }
             });
         }
+
+        page.addEventListener("rotate-towards-player", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            rotateTowardsPlayer[0] = ctx.getValue("rotate-towards-player", Boolean.class).orElse(false);
+        });
 
         page.addEventListener("nametag-offset", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
             ctx.getValue("nametag-offset", Double.class)
@@ -2192,10 +2192,6 @@ public class CitizensUI {
                 useLiveSkin[0] = ctx.getValue("live-skin-check", Boolean.class).orElse(false);
             });
 
-            page.addEventListener("rotate-towards-player", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
-                rotateTowardsPlayer[0] = ctx.getValue("rotate-towards-player", Boolean.class).orElse(true);
-            });
-
             page.addEventListener("get-player-skin-btn", CustomUIEventBindingType.Activating, event -> {
                 skinUsername[0] = playerRef.getUsername();
                 cachedSkin[0] = null;
@@ -2213,6 +2209,10 @@ public class CitizensUI {
                 }
             });
         }
+
+        page.addEventListener("rotate-towards-player", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            rotateTowardsPlayer[0] = ctx.getValue("rotate-towards-player", Boolean.class).orElse(false);
+        });
 
         page.addEventListener("nametag-offset", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
             ctx.getValue("nametag-offset", Double.class)
@@ -2528,8 +2528,8 @@ public class CitizensUI {
     }
 
     public void openEditCommandGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store,
-                                    @Nonnull String citizenId, @Nonnull List<CommandAction> actions,
-                                    boolean isCreating, @Nonnull CommandAction command, int editIndex) {
+                                   @Nonnull String citizenId, @Nonnull List<CommandAction> actions,
+                                   boolean isCreating, @Nonnull CommandAction command, int editIndex) {
         TemplateProcessor template = createBaseTemplate()
                 .setVariable("command", command.getCommand())
                 .setVariable("runAsServer", command.isRunAsServer());
@@ -2649,8 +2649,9 @@ public class CitizensUI {
                 .setVariable("takesDamage", takesDamage)
                 .setVariable("isAnyWander", !"IDLE".equals(mb.getType()))
                 .setVariable("isR0", mb.getWanderRadius() < 1)
-                .setVariable("isR2", mb.getWanderRadius() > 1 && mb.getWanderRadius() < 3)
-                .setVariable("isR5", mb.getWanderRadius() > 3 && mb.getWanderRadius() <= 7)
+                .setVariable("isR1", mb.getWanderRadius() >= 1 && mb.getWanderRadius() < 2)
+                .setVariable("isR2", mb.getWanderRadius() >= 2 && mb.getWanderRadius() < 3)
+                .setVariable("isR5", mb.getWanderRadius() >= 3 && mb.getWanderRadius() <= 7)
                 .setVariable("isR10", mb.getWanderRadius() > 7 && mb.getWanderRadius() <= 12)
                 .setVariable("isR15", mb.getWanderRadius() > 12)
                 .setVariable("respawnOnDeath", citizen.isRespawnOnDeath())
@@ -2688,21 +2689,21 @@ public class CitizensUI {
                                 {{#if isPassive}}
                                 <div class="card">
                                     <div class="card-body">
-                                        <p style="color: #8b949e; font-size: 11; text-align: center;">The citizen will ignore players completely and never engage in combat.</p>
+                                        <p style="color: #8b949e; font-size: 12; text-align: center;">The citizen will ignore players completely and never engage in combat.</p>
                                     </div>
                                 </div>
                                 {{/if}}
                                 {{#if isNeutral}}
                                 <div class="card">
                                     <div class="card-body">
-                                        <p style="color: #8b949e; font-size: 11; text-align: center;">The citizen will only attack players who attack them first.</p>
+                                        <p style="color: #8b949e; font-size: 12; text-align: center;">The citizen will only attack players who attack them first.</p>
                                     </div>
                                 </div>
                                 {{/if}}
                                 {{#if isAggressive}}
                                 <div class="card">
                                     <div class="card-body">
-                                        <p style="color: #8b949e; font-size: 11; text-align: center;">The citizen will attack players on sight.</p>
+                                        <p style="color: #8b949e; font-size: 12; text-align: center;">The citizen will attack players on sight.</p>
                                     </div>
                                 </div>
                                 {{/if}}
@@ -2763,24 +2764,29 @@ public class CitizensUI {
                                 {{#if isIdle}}
                                 <div class="card">
                                     <div class="card-body">
-                                        <p style="color: #8b949e; font-size: 11; text-align: center;">The citizen will stay in place and not move.</p>
+                                        <p style="color: #8b949e; font-size: 12; text-align: center;">The citizen will stay in place and not move.</p>
                                     </div>
                                 </div>
                                 {{/if}}
                 
                                 {{#if isAnyWander}}
                                 <div class="spacer-sm"></div>
-                                <p style="color: #c9d1d9; font-size: 11; font-weight: bold; text-align: center;">Wander Radius</p>
+                                <p style="color: #c9d1d9; font-size: 12; font-weight: bold; text-align: center;">Wander Radius</p>
+                                <div class="card-body">
+                                    <p style="color: #8b949e; font-size: 12; text-align: center;">Note: The wander system uses Hytale's built in wander system. While Citizens usually stay close to the selected radius, they sometimes go a bit further.</p>
+                                </div>
                                 <div class="spacer-xs"></div>
                                 <div class="form-row">
                                     <!-- <button id="radius-0" class="{{#if isR0}}btn-primary{{else}}btn-secondary{{/if}}" style="anchor-width: 162; anchor-height: 46;">0 Blocks</button> -->
-                                    <button id="radius-2" class="{{#if isR2}}btn-primary{{else}}btn-secondary{{/if}}" style="anchor-width: 162; anchor-height: 46;">2 Blocks</button>
+                                    <button id="radius-1" class="{{#if isR1}}btn-primary{{else}}btn-secondary{{/if}}" style="anchor-width: 130; anchor-height: 46;">1 Block</button>
                                     <div class="spacer-h-sm"></div>
-                                    <button id="radius-5" class="{{#if isR5}}btn-primary{{else}}btn-secondary{{/if}}" style="anchor-width: 162; anchor-height: 46;">5 Blocks</button>
+                                    <button id="radius-2" class="{{#if isR2}}btn-primary{{else}}btn-secondary{{/if}}" style="anchor-width: 150; anchor-height: 46;">2 Blocks</button>
                                     <div class="spacer-h-sm"></div>
-                                    <button id="radius-10" class="{{#if isR10}}btn-primary{{else}}btn-secondary{{/if}}" style="anchor-width: 162; anchor-height: 46;">10 Blocks</button>
+                                    <button id="radius-5" class="{{#if isR5}}btn-primary{{else}}btn-secondary{{/if}}" style="anchor-width: 150; anchor-height: 46;">5 Blocks</button>
                                     <div class="spacer-h-sm"></div>
-                                    <button id="radius-15" class="{{#if isR15}}btn-primary{{else}}btn-secondary{{/if}}" style="anchor-width: 162; anchor-height: 46;">15 Blocks</button>
+                                    <button id="radius-10" class="{{#if isR10}}btn-primary{{else}}btn-secondary{{/if}}" style="anchor-width: 160; anchor-height: 46;">10 Blocks</button>
+                                    <div class="spacer-h-sm"></div>
+                                    <button id="radius-15" class="{{#if isR15}}btn-primary{{else}}btn-secondary{{/if}}" style="anchor-width: 160; anchor-height: 46;">15 Blocks</button>
                                 </div>
                                 {{/if}}
                             </div>
@@ -2933,6 +2939,12 @@ public class CitizensUI {
 //                plugin.getCitizensManager().saveCitizen(citizen);
 //                openBehaviorsGUI(playerRef, store, citizen);
 //            });
+
+            page.addEventListener("radius-1", CustomUIEventBindingType.Activating, event -> {
+                citizen.setMovementBehavior(new MovementBehavior(moveType, walkSpeed[0], 1, wanderWidth[0], wanderDepth[0]));
+                plugin.getCitizensManager().saveCitizen(citizen);
+                openBehaviorsGUI(playerRef, store, citizen);
+            });
 
             page.addEventListener("radius-2", CustomUIEventBindingType.Activating, event -> {
                 citizen.setMovementBehavior(new MovementBehavior(moveType, walkSpeed[0], 2, wanderWidth[0], wanderDepth[0]));
@@ -3181,13 +3193,13 @@ public class CitizensUI {
                                 <div class="spacer-sm"></div>
 
                                 {{#if hasDefaultForSlot}}
-                                <p style="color: #58a6ff; font-size: 11; text-align: center; margin-bottom: 8px;">
+                                <p style="color: #58a6ff; font-size: 12; text-align: center; margin-bottom: 8px;">
                                     Will use DEFAULT animation "{{$defaultAnimName}}" when stopping (leave dropdown empty to use DEFAULT)
                                 </p>
                                 {{/if}}
 
                                 <div class="section" style="background-color: #161b22;">
-                                    <p style="color: #8b949e; font-size: 11; text-align: center; margin-bottom: 6px;">Stop Animation</p>
+                                    <p style="color: #8b949e; font-size: 12; text-align: center; margin-bottom: 6px;">Stop Animation</p>
                                     <select id="stop-anim-name" data-hyui-showlabel="true">
                                         <option value="" {{#if stopAnimNameIsEmpty}}selected{{/if}}>{{#if hasDefaultForSlot}}DEFAULT{{else}}Idle{{/if}}</option>
                                         {{$stopAnimationOptions}}
@@ -3430,9 +3442,9 @@ public class CitizensUI {
                 
                                 <div class="card">
                                     <div class="card-body">
-                                        <p style="color: #8b949e; font-size: 11;"><span style="color: #58a6ff;">Colors:</span> {RED}, {GREEN}, {BLUE}, {YELLOW}, {#HEX} for colored text</p>
+                                        <p style="color: #8b949e; font-size: 12;"><span style="color: #58a6ff;">Colors:</span> {RED}, {GREEN}, {BLUE}, {YELLOW}, {#HEX} for colored text</p>
                                         <div class="spacer-xs"></div>
-                                        <p style="color: #8b949e; font-size: 11;"><span style="color: #58a6ff;">Variables:</span> {PlayerName} for player's name, {CitizenName} for citizen's name</p>
+                                        <p style="color: #8b949e; font-size: 12;"><span style="color: #58a6ff;">Variables:</span> {PlayerName} for player's name, {CitizenName} for citizen's name</p>
                                     </div>
                                 </div>
                             </div>
@@ -3592,7 +3604,7 @@ public class CitizensUI {
     }
 
     public void openEditMessageGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store,
-                                    @Nonnull CitizenData citizen, @Nonnull CitizenMessage message, int editIndex) {
+                                   @Nonnull CitizenData citizen, @Nonnull CitizenMessage message, int editIndex) {
         TemplateProcessor template = createBaseTemplate()
                 .setVariable("message", message.getMessage());
 
@@ -3624,9 +3636,9 @@ public class CitizensUI {
                             <!-- Color Reference -->
                             <div class="card">
                                 <div class="card-body">
-                                    <p style="color: #8b949e; font-size: 11;"><span style="color: #58a6ff;">Colors:</span> {RED}, {GREEN}, {BLUE}, {YELLOW}, {#HEX} for colored text</p>
+                                    <p style="color: #8b949e; font-size: 12;"><span style="color: #58a6ff;">Colors:</span> {RED}, {GREEN}, {BLUE}, {YELLOW}, {#HEX} for colored text</p>
                                     <div class="spacer-xs"></div>
-                                    <p style="color: #8b949e; font-size: 11;"><span style="color: #58a6ff;">Variables:</span> {PlayerName} for player's name, {CitizenName} for citizen's name</p>
+                                    <p style="color: #8b949e; font-size: 12;"><span style="color: #58a6ff;">Variables:</span> {PlayerName} for player's name, {CitizenName} for citizen's name</p>
                                 </div>
                             </div>
 

@@ -109,11 +109,32 @@ public class EntityDamageListener extends DamageEventSystem {
                 event.setCancelled(true);
                 event.setAmount(0);
                 World world = Universe.get().getWorld(citizen.getWorldUUID());
-                if (world != null) {
-                    // Prevent knockback
-                    world.execute(() -> {
-                        store.removeComponentIfExists(targetRef, KnockbackComponent.getComponentType());
-                    });
+                // Todo: This does not work
+//                if (world != null) {
+//                    // Prevent knockback
+//                    world.execute(() -> {
+//                        store.removeComponentIfExists(targetRef, KnockbackComponent.getComponentType());
+//                    });
+//                }
+                // Temporary solution to knockback
+                TransformComponent transformComponent = store.getComponent(targetRef, TransformComponent.getComponentType());
+                if (transformComponent != null && world != null) {
+                    Vector3d lockedPosition = new Vector3d(transformComponent.getPosition());
+
+                    ScheduledFuture<?> lockTask = HytaleServer.SCHEDULED_EXECUTOR.scheduleAtFixedRate(() -> {
+                        if (!targetRef.isValid()) {
+                            return;
+                        }
+
+                        Vector3d currentPosition = transformComponent.getPosition();
+                        if (!currentPosition.equals(lockedPosition)) {
+                            transformComponent.setPosition(lockedPosition);
+                        }
+                    }, 0, 20, TimeUnit.MILLISECONDS);
+
+                    HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
+                        lockTask.cancel(false);
+                    }, 2000, TimeUnit.MILLISECONDS);
                 }
             }
             else {

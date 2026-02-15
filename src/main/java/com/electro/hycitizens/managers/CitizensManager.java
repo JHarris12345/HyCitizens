@@ -850,13 +850,15 @@ public class CitizensManager {
 
         PlayerSkin skinToUse = determineSkin(citizen);
 
-        if (skinToUse == null) {
-            skinToUse = SkinUtilities.createDefaultSkin();
-        }
-
         float scale = Math.max((float)0.01, citizen.getScale());
-        //Model playerModel = CosmeticsModule.get().createModel(skinToUse, scale);
-        Model playerModel = CosmeticsModule.get().createModel(skinToUse, scale);
+        Model playerModel;
+
+        if (skinToUse != null) {
+            playerModel = CosmeticsModule.get().createModel(skinToUse, scale);
+        } else {
+            Map<String, String> randomAttachmentIds = new HashMap<>();
+            playerModel = new Model.ModelReference("Player", scale, randomAttachmentIds).toModel();
+        }
         //Map<String, String> randomAttachmentIds = new HashMap<>();
         //Model playerModel = new Model.ModelReference("PlayerTestModel_V", scale, randomAttachmentIds).toModel();
 
@@ -890,9 +892,10 @@ public class CitizensManager {
 
         npc.second().setInventorySize(9, 30, 5);
 
-        // Apply skin component
-        PlayerSkinComponent skinComponent = new PlayerSkinComponent(skinToUse);
-        npc.first().getStore().putComponent(npc.second().getReference(), PlayerSkinComponent.getComponentType(), skinComponent);
+        if (skinToUse != null) {
+            PlayerSkinComponent skinComponent = new PlayerSkinComponent(skinToUse);
+            npc.first().getStore().putComponent(npc.second().getReference(), PlayerSkinComponent.getComponentType(), skinComponent);
+        }
 
         PersistentModel persistentModel = npc.first().getStore().getComponent(npc.second().getReference(), PersistentModel.getComponentType());
         if (persistentModel != null) {
@@ -924,11 +927,10 @@ public class CitizensManager {
 
     public PlayerSkin determineSkin(CitizenData citizen) {
         if (citizen.isUseLiveSkin() && !citizen.getSkinUsername().isEmpty()) {
-            // Fetch live skin asynchronously, but for now return cached or default
             updateCitizenSkin(citizen, true);
-            return citizen.getCachedSkin() != null ? citizen.getCachedSkin() : SkinUtilities.createDefaultSkin();
+            return citizen.getCachedSkin();
         } else {
-            return citizen.getCachedSkin() != null ? citizen.getCachedSkin() : SkinUtilities.createDefaultSkin();
+            return citizen.getCachedSkin();
         }
     }
 
@@ -941,23 +943,22 @@ public class CitizensManager {
 
         if (cachedSkin == null || citizen.isUseLiveSkin()) {
             SkinUtilities.getSkin(citizen.getSkinUsername()).thenAccept(skin -> {
-                citizen.setCachedSkin(skin);
-                citizen.setLastSkinUpdate(System.currentTimeMillis());
+                if (skin != null) {
+                    citizen.setCachedSkin(skin);
+                    citizen.setLastSkinUpdate(System.currentTimeMillis());
 
-                if (save) {
-                    saveCitizen(citizen);
-                }
+                    if (save) {
+                        saveCitizen(citizen);
+                    }
 
-                // Update the spawned NPC if it exists
-                if (citizen.getSpawnedUUID() != null) {
-                    World world = Universe.get().getWorld(citizen.getWorldUUID());
-                    if (world != null) {
-                        Ref<EntityStore> npcRef = world.getEntityRef(citizen.getSpawnedUUID());
-                        if (npcRef != null && npcRef.isValid()) {
-                            world.execute(() -> {
-                                // Update skin component
-                                PlayerSkinComponent skinComponent = new PlayerSkinComponent(skin);
-                                npcRef.getStore().putComponent(npcRef, PlayerSkinComponent.getComponentType(), skinComponent);
+                    if (citizen.getSpawnedUUID() != null) {
+                        World world = Universe.get().getWorld(citizen.getWorldUUID());
+                        if (world != null) {
+                            Ref<EntityStore> npcRef = world.getEntityRef(citizen.getSpawnedUUID());
+                            if (npcRef != null && npcRef.isValid()) {
+                                world.execute(() -> {
+                                    PlayerSkinComponent skinComponent = new PlayerSkinComponent(skin);
+                                    npcRef.getStore().putComponent(npcRef, PlayerSkinComponent.getComponentType(), skinComponent);
 
                                 // Update model
                                 float scale = Math.max((float) 0.01, citizen.getScale());
@@ -978,6 +979,7 @@ public class CitizensManager {
                                 }
                             });
                         }
+                    }
                     }
                 }
             });
@@ -1250,8 +1252,163 @@ public class CitizensManager {
     }
 
     public void updateSpawnedCitizenHologram(CitizenData citizen, boolean save) {
-        despawnCitizenHologram(citizen);
-        spawnCitizenHologram(citizen, save);
+        //despawnCitizenHologram(citizen);
+        //spawnCitizenHologram(citizen, save);
+
+        if (citizen.isHideNametag()) {
+            despawnCitizenHologram(citizen);
+            if (save) {
+                saveCitizen(citizen);
+            }
+            return;
+        }
+
+        World world = Universe.get().getWorld(citizen.getWorldUUID());
+        if (world == null) {
+            getLogger().atWarning().log("Failed to update citizen hologram: " + citizen.getName() + ". Failed to find world.");
+            if (save) {
+                saveCitizen(citizen);
+            }
+            return;
+        }
+
+        String name = citizen.getName();
+        if (name == null || name.isEmpty()) {
+            despawnCitizenHologram(citizen);
+            if (save) {
+                saveCitizen(citizen);
+            }
+            return;
+        }
+
+        name = name.replace("\\n", "\n");
+        String[] lines = name.split("\\r?\\n");
+
+        // Filter out empty lines
+        List<String> nonEmptyLines = new ArrayList<>();
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (!trimmed.isEmpty()) {
+                nonEmptyLines.add(trimmed);
+            }
+        }
+
+        List<UUID> existingUuids = citizen.getHologramLineUuids();
+        int existingCount = existingUuids.size();
+        int newCount = nonEmptyLines.size();
+
+        // Calculate position parameters
+        double scale = Math.max(0.01, citizen.getScale() + citizen.getNametagOffset());
+        double baseOffset = 1.65;
+        double extraPerScale = 0.40;
+        double yOffset = baseOffset * scale + (scale - 1.0) * extraPerScale;
+        double lineSpacing = 0.25;
+
+        Vector3d baseHologramPos = new Vector3d(
+                citizen.getPosition().x,
+                citizen.getPosition().y + yOffset,
+                citizen.getPosition().z
+        );
+        Vector3f hologramRot = new Vector3f(citizen.getRotation());
+
+        world.execute(() -> {
+            long chunkIndex = ChunkUtil.indexChunkFromBlock(citizen.getPosition().x, citizen.getPosition().z);
+            WorldChunk chunk = world.getChunkIfLoaded(chunkIndex);
+            if (chunk == null) {
+                // Chunk not loaded, just save it
+                if (save) {
+                    saveCitizen(citizen);
+                }
+                return;
+            }
+
+            // Update existing lines
+            int linesToUpdate = Math.min(existingCount, newCount);
+            for (int i = 0; i < linesToUpdate; i++) {
+                UUID uuid = existingUuids.get(i);
+                String lineText = nonEmptyLines.get(i);
+
+                Ref<EntityStore> entity = world.getEntityRef(uuid);
+                if (entity != null) {
+                    // Update position
+                    Vector3d linePos = new Vector3d(
+                            baseHologramPos.x,
+                            baseHologramPos.y + ((newCount - 1 - i) * lineSpacing),
+                            baseHologramPos.z
+                    );
+
+                    TransformComponent transform = entity.getStore().getComponent(entity, TransformComponent.getComponentType());
+                    if (transform != null) {
+                        transform.setPosition(linePos);
+                        transform.setRotation(hologramRot);
+                    }
+
+                    // Update text
+                    Nameplate nameplate = entity.getStore().getComponent(entity, Nameplate.getComponentType());
+                    if (nameplate != null) {
+                        nameplate.setText(lineText);
+                    }
+                }
+            }
+
+            // Despawn extra lines if new text has fewer lines
+            if (existingCount > newCount) {
+                for (int i = newCount; i < existingCount; i++) {
+                    UUID uuid = existingUuids.get(i);
+                    Ref<EntityStore> entity = world.getEntityRef(uuid);
+                    if (entity != null) {
+                        world.getEntityStore().getStore().removeEntity(entity, RemoveReason.REMOVE);
+                    }
+                }
+                // Remove the extra UUIDs from the list
+                existingUuids.subList(newCount, existingCount).clear();
+            }
+
+            // Spawn new lines if needed
+            if (newCount > existingCount) {
+                for (int i = existingCount; i < newCount; i++) {
+                    String lineText = nonEmptyLines.get(i);
+
+                    Vector3d linePos = new Vector3d(
+                            baseHologramPos.x,
+                            baseHologramPos.y + ((newCount - 1 - i) * lineSpacing),
+                            baseHologramPos.z
+                    );
+
+                    Holder<EntityStore> holder = EntityStore.REGISTRY.newHolder();
+
+                    ProjectileComponent projectileComponent = new ProjectileComponent("Projectile");
+                    holder.putComponent(ProjectileComponent.getComponentType(), projectileComponent);
+
+                    holder.putComponent(TransformComponent.getComponentType(), new TransformComponent(linePos, hologramRot));
+                    holder.ensureComponent(UUIDComponent.getComponentType());
+
+                    if (projectileComponent.getProjectile() == null) {
+                        projectileComponent.initialize();
+                        if (projectileComponent.getProjectile() == null) {
+                            continue;
+                        }
+                    }
+
+                    holder.addComponent(
+                            NetworkId.getComponentType(),
+                            new NetworkId(world.getEntityStore().getStore().getExternalData().takeNextNetworkId())
+                    );
+
+                    UUIDComponent hologramUUIDComponent = holder.getComponent(UUIDComponent.getComponentType());
+                    if (hologramUUIDComponent != null) {
+                        existingUuids.add(hologramUUIDComponent.getUuid());
+                    }
+
+                    holder.addComponent(Nameplate.getComponentType(), new Nameplate(lineText));
+                    world.getEntityStore().getStore().addEntity(holder, AddReason.SPAWN);
+                }
+            }
+
+            if (save) {
+                saveCitizen(citizen);
+            }
+        });
     }
 
     public void rotateCitizenToPlayer(CitizenData citizen, PlayerRef playerRef) {

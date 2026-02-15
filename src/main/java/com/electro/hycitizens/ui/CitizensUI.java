@@ -2118,8 +2118,10 @@ public class CitizensUI {
                 } else {
                     playerRef.sendMessage(Message.raw("Fetching skin for \"" + skinUsername[0] + "\"...").color(Color.YELLOW));
                     com.electro.hycitizens.util.SkinUtilities.getSkin(skinUsername[0].trim()).thenAccept(skin -> {
-                        citizen.setCachedSkin(skin);
-                        citizen.setLastSkinUpdate(System.currentTimeMillis());
+                        if (skin != null) {
+                            citizen.setCachedSkin(skin);
+                            citizen.setLastSkinUpdate(System.currentTimeMillis());
+                        }
                         plugin.getCitizensManager().addCitizen(citizen, true);
                         playerRef.sendMessage(Message.raw("Citizen \"" + name + "\" created at your position!").color(Color.GREEN));
                         openCitizensGUI(playerRef, store, Tab.MANAGE);
@@ -2391,6 +2393,8 @@ public class CitizensUI {
                 skinUsername[0] = playerRef.getUsername();
             }
 
+            String oldSkinUsername = citizen.getSkinUsername();
+
             citizen.setName(name);
             citizen.setModelId(modelId);
             citizen.setScale(currentScale[0]);
@@ -2420,23 +2424,28 @@ public class CitizensUI {
                     playerRef.sendMessage(Message.raw("Citizen '" + name + "' updated!").color(Color.GREEN));
                     openCitizensGUI(playerRef, store, Tab.MANAGE);
                 } else if (skinUsername[0].trim().startsWith("random_") && citizen.getCachedSkin() != null) {
-                    // Keep existing random skin, don't fetch from API
                     plugin.getCitizensManager().updateCitizen(citizen, true);
                     playerRef.sendMessage(Message.raw("Citizen '" + name + "' updated!").color(Color.GREEN));
                     openCitizensGUI(playerRef, store, Tab.MANAGE);
-                } else if (skinUsername[0].equals(citizen.getSkinUsername()) && citizen.getCachedSkin() != null) {
-                    // Skin username hasn't changed and we have a cached skin, keep it
+                } else if (skinUsername[0].equals(oldSkinUsername) && citizen.getCachedSkin() != null) {
                     plugin.getCitizensManager().updateCitizen(citizen, true);
                     playerRef.sendMessage(Message.raw("Citizen '" + name + "' updated!").color(Color.GREEN));
                     openCitizensGUI(playerRef, store, Tab.MANAGE);
                 } else {
-                    playerRef.sendMessage(Message.raw("Fetching skin for '" + skinUsername[0] + "'...").color(Color.YELLOW));
+                    playerRef.sendMessage(Message.raw("Fetching skin for \"" + skinUsername[0] + "\"...").color(Color.YELLOW));
                     com.electro.hycitizens.util.SkinUtilities.getSkin(skinUsername[0].trim()).thenAccept(skin -> {
-                        citizen.setCachedSkin(skin);
-                        citizen.setLastSkinUpdate(System.currentTimeMillis());
-                        plugin.getCitizensManager().updateCitizen(citizen, true);
-                        playerRef.sendMessage(Message.raw("Citizen '" + name + "' updated!").color(Color.GREEN));
-                        openCitizensGUI(playerRef, store, Tab.MANAGE);
+                        World world = Universe.get().getWorld(citizen.getWorldUUID());
+                        if (world != null) {
+                            world.execute(() -> {
+                                if (skin != null) {
+                                    citizen.setCachedSkin(skin);
+                                    citizen.setLastSkinUpdate(System.currentTimeMillis());
+                                }
+                                plugin.getCitizensManager().updateCitizen(citizen, true);
+                                playerRef.sendMessage(Message.raw("Citizen '" + name + "' updated!").color(Color.GREEN));
+                                openCitizensGUI(playerRef, store, Tab.MANAGE);
+                            });
+                        }
                     });
                 }
             } else {

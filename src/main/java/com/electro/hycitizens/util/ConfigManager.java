@@ -185,9 +185,12 @@ public class ConfigManager {
         try {
             Files.createDirectories(configFile.getParent());
 
-            try (Writer writer = new FileWriter(configFile.toFile())) {
+            Path tempFile = configFile.getParent().resolve("data.json.tmp");
+            try (Writer writer = new FileWriter(tempFile.toFile())) {
                 gson.toJson(config, writer);
             }
+
+            Files.move(tempFile, configFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException e) {
             System.err.println("Failed to save config: " + e.getMessage());
         }

@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -192,37 +193,42 @@ public class CitizenInteraction {
         }
 
         // Run commands
+        // Using CompletableFuture to ensure the commands run in the correct order
+        CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+
         for (CommandAction commandAction : citizen.getCommandActions()) {
-            String command = commandAction.getCommand();
+            chain = chain.thenCompose(v -> {
+                String command = commandAction.getCommand();
 
-            // Replace {PlayerName} placeholders
-            command = Pattern.compile("\\{PlayerName}", Pattern.CASE_INSENSITIVE)
-                    .matcher(command)
-                    .replaceAll(playerRef.getUsername());
+                // Replace {PlayerName} placeholders
+                command = Pattern.compile("\\{PlayerName}", Pattern.CASE_INSENSITIVE)
+                        .matcher(command)
+                        .replaceAll(playerRef.getUsername());
 
-            // Replace {CitizenName} placeholders
-            command = Pattern.compile("\\{CitizenName}", Pattern.CASE_INSENSITIVE)
-                    .matcher(command)
-                    .replaceAll(citizen.getName());
+                // Replace {CitizenName} placeholders
+                command = Pattern.compile("\\{CitizenName}", Pattern.CASE_INSENSITIVE)
+                        .matcher(command)
+                        .replaceAll(citizen.getName());
 
-            // Check if this is a "send message" command
-            if (command.startsWith("{SendMessage}")) {
-                String messageContent = command.substring("{SendMessage}".length()).trim();
+                // Check if this is a "send message" command
+                if (command.startsWith("{SendMessage}")) {
+                    String messageContent = command.substring("{SendMessage}".length()).trim();
 
-                Message msg = parseColoredMessage(messageContent);
-                if (msg != null) {
-                    playerRef.sendMessage(msg);
-                }
-            } else {
-                // Regular command execution
-                if (commandAction.isRunAsServer()) {
-                    CommandManager.get().handleCommand(ConsoleSender.INSTANCE, command);
+                    Message msg = parseColoredMessage(messageContent);
+                    if (msg != null) {
+                        playerRef.sendMessage(msg);
+                    }
+
+                    return CompletableFuture.completedFuture(null);
                 } else {
-                    CommandManager.get().handleCommand(player, command);
+                    if (commandAction.isRunAsServer()) {
+                        return CommandManager.get().handleCommand(ConsoleSender.INSTANCE, command);
+                    } else {
+                        return CommandManager.get().handleCommand(player, command);
+                    }
                 }
-            }
+            });
         }
-
     }
 
     private static String replacePlaceholders(@Nonnull String text, @Nonnull PlayerRef playerRef, @Nonnull CitizenData citizen) {

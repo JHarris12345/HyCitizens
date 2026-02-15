@@ -61,6 +61,11 @@ public class PlayerConnectionListener {
                 return;
 
             world.execute(() -> {
+                // Check if player has moved worlds
+                if (!world.getWorldConfig().getUuid().equals(playerRef.getWorldUuid())) {
+                    return;
+                }
+
                 Ref<EntityStore> ref = playerRef.getReference();
                 if (ref == null || !ref.isValid()) {
                     return;

@@ -506,6 +506,7 @@ public class CitizensUI {
                         color: #8b949e;
                         font-size: 12;
                         flex-weight: 1;
+                        text-align: center;
                     }
                 
                     .divider {

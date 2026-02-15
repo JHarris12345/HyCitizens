@@ -7,6 +7,7 @@ import com.electro.hycitizens.models.CitizenMessage;
 import com.electro.hycitizens.models.CommandAction;
 import com.electro.hycitizens.models.MessagesConfig;
 import com.hypixel.hytale.component.Ref;
+import com.hypixel.hytale.server.core.HytaleServer;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.CommandManager;
 import com.hypixel.hytale.server.core.console.ConsoleSender;
@@ -22,6 +23,7 @@ import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -198,6 +200,16 @@ public class CitizenInteraction {
 
         for (CommandAction commandAction : citizen.getCommandActions()) {
             chain = chain.thenCompose(v -> {
+                // If there's a delay, schedule the next step
+                if (commandAction.getDelaySeconds() > 0) {
+                    CompletableFuture<Void> delayedFuture = new CompletableFuture<>();
+                    HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
+                        delayedFuture.complete(null);
+                    }, (long) (commandAction.getDelaySeconds() * 1000), TimeUnit.MILLISECONDS);
+                    return delayedFuture;
+                }
+                return CompletableFuture.completedFuture(null);
+            }).thenCompose(v -> {
                 String command = commandAction.getCommand();
 
                 // Replace {PlayerName} placeholders

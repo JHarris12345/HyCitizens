@@ -86,11 +86,11 @@ public class CitizensUI {
         // Add existing groups
         for (String groupName : allGroups) {
             boolean isSelected = groupName.equals(selectedValue);
-            sb.append("<option value=\"").append(groupName).append("\"");
+            sb.append("<option value=\"").append(escapeHtml(groupName)).append("\"");
             if (isSelected) {
                 sb.append(" selected");
             }
-            sb.append(">").append(groupName).append("</option>\n");
+            sb.append(">").append(escapeHtml(groupName)).append("</option>\n");
         }
 
         return sb.toString();
@@ -106,6 +106,40 @@ public class CitizensUI {
 
     private String sanitizeGroupId(String groupName) {
         return groupName.replace(" ", "-").replace("'", "").replace("\"", "");
+    }
+
+    private static String escapeHtml(String text) {
+        if (text == null) return "";
+        return text
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
+    }
+
+    public static class SafeCitizen {
+        private final CitizenData citizen;
+
+        public SafeCitizen(CitizenData citizen) {
+            this.citizen = citizen;
+        }
+
+        public String getId() { return citizen.getId(); }
+        public String getName() { return escapeHtml(citizen.getName()); }
+        public String getModelId() { return escapeHtml(citizen.getModelId()); }
+        public float getScale() { return citizen.getScale(); }
+        public String getGroup() { return escapeHtml(citizen.getGroup()); }
+        public float getNametagOffset() { return citizen.getNametagOffset(); }
+        public boolean isPlayerModel() { return citizen.isPlayerModel(); }
+        public boolean isUseLiveSkin() { return citizen.isUseLiveSkin(); }
+        public String getSkinUsername() { return escapeHtml(citizen.getSkinUsername()); }
+        public String getRequiredPermission() { return escapeHtml(citizen.getRequiredPermission()); }
+        public String getNoPermissionMessage() { return escapeHtml(citizen.getNoPermissionMessage()); }
+        public boolean getRotateTowardsPlayer() { return citizen.getRotateTowardsPlayer(); }
+        public boolean getFKeyInteractionEnabled() { return citizen.getFKeyInteractionEnabled(); }
+        public boolean isHideNametag() { return citizen.isHideNametag(); }
+        public boolean isHideNpc() { return citizen.isHideNpc(); }
     }
 
     private String getSharedStyles() {
@@ -714,7 +748,8 @@ public class CitizensUI {
         private final boolean isGroup;
         private final String groupName;
         private final String groupId;
-        private final CitizenData citizen;
+        private final CitizenData rawCitizen;
+        private final SafeCitizen citizen;
 
         public static ListItem forGroup(String groupName, String groupId) {
             return new ListItem(true, groupName, groupId, null);
@@ -726,15 +761,17 @@ public class CitizensUI {
 
         private ListItem(boolean isGroup, String groupName, String groupId, CitizenData citizen) {
             this.isGroup = isGroup;
-            this.groupName = groupName;
+            this.groupName = escapeHtml(groupName);
             this.groupId = groupId;
-            this.citizen = citizen;
+            this.rawCitizen = citizen;
+            this.citizen = citizen != null ? new SafeCitizen(citizen) : null;
         }
 
         public boolean isGroup() { return isGroup; }
         public String getGroupName() { return groupName; }
         public String getGroupId() { return groupId; }
-        public CitizenData getCitizen() { return citizen; }
+        public SafeCitizen getCitizen() { return citizen; }
+        public CitizenData getRawCitizen() { return rawCitizen; }
     }
 
     public void openCitizensGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store, @Nonnull Tab currentTab) {
@@ -816,8 +853,8 @@ public class CitizensUI {
                 .setVariable("isManageTab", currentTab == Tab.MANAGE)
                 .setVariable("unifiedList", unifiedList)
                 .setVariable("hasCitizens", !filteredCitizens.isEmpty())
-                .setVariable("searchQuery", searchQuery)
-                .setVariable("viewingGroup", viewingGroup != null ? viewingGroup : "")
+                .setVariable("searchQuery", escapeHtml(searchQuery))
+                .setVariable("viewingGroup", viewingGroup != null ? escapeHtml(viewingGroup) : "")
                 .setVariable("isViewingGroup", isViewingSpecificGroup);
 
         String html = template.process(getSharedStyles() + """
@@ -970,18 +1007,18 @@ public class CitizensUI {
 
         TemplateProcessor template = createBaseTemplate()
                 .setVariable("isPlayerModel", isPlayerModel)
-                .setVariable("name", name)
+                .setVariable("name", escapeHtml(name))
                 .setVariable("nametagOffset", nametagOffset)
                 .setVariable("hideNametag", hideNametag)
                 .setVariable("hideNpc", hideNpc)
-                .setVariable("group", group)
+                .setVariable("group", escapeHtml(group))
                 .setVariable("groupOptions", groupOptionsHTML)
                 .setVariable("modelId", modelId.isEmpty() ? "PlayerTestModel_V" : modelId)
                 .setVariable("scale", scale)
-                .setVariable("permission", permission)
-                .setVariable("permMessage", permMessage)
+                .setVariable("permission", escapeHtml(permission))
+                .setVariable("permMessage", escapeHtml(permMessage))
                 .setVariable("useLiveSkin", useLiveSkin)
-                .setVariable("skinUsername", skinUsername)
+                .setVariable("skinUsername", escapeHtml(skinUsername))
                 .setVariable("rotateTowardsPlayer", rotateTowardsPlayer)
                 .setVariable("fKeyInteraction", fKeyInteraction)
                 .setVariable("entityOptions", generateEntityDropdownOptions(modelId.isEmpty() ? "PlayerTestModel_V" : modelId));
@@ -1270,7 +1307,7 @@ public class CitizensUI {
         String groupOptionsHTML = generateGroupDropdownOptions(citizen.getGroup(), allGroups);
 
         TemplateProcessor template = createBaseTemplate()
-                .setVariable("citizen", citizen)
+                .setVariable("citizen", new SafeCitizen(citizen))
                 .setVariable("isPlayerModel", citizen.isPlayerModel())
                 .setVariable("useLiveSkin", citizen.isUseLiveSkin())
                 .setVariable("rotateTowardsPlayer", citizen.getRotateTowardsPlayer())
@@ -1587,7 +1624,7 @@ public class CitizensUI {
         public IndexedAnimationBehavior(int index, AnimationBehavior ab) {
             this.index = index;
             this.type = ab.getType();
-            this.animationName = ab.getAnimationName();
+            this.animationName = escapeHtml(ab.getAnimationName());
             this.animationSlot = ab.getAnimationSlot();
             this.slotName = switch (ab.getAnimationSlot()) {
                 case 1 -> "Status";
@@ -1611,7 +1648,8 @@ public class CitizensUI {
         public IndexedMessage(int index, CitizenMessage msg) {
             this.index = index;
             this.message = msg.getMessage();
-            this.truncated = msg.getMessage().length() > 60 ? msg.getMessage().substring(0, 57) + "..." : msg.getMessage();
+            String truncatedRaw = msg.getMessage().length() > 60 ? msg.getMessage().substring(0, 57) + "..." : msg.getMessage();
+            this.truncated = escapeHtml(truncatedRaw);
         }
     }
 
@@ -1623,7 +1661,7 @@ public class CitizensUI {
 
         public IndexedCommandAction(int index, CommandAction action) {
             this.index = index;
-            this.command = action.getCommand();
+            this.command = escapeHtml(action.getCommand());
             this.runAsServer = action.isRunAsServer();
             this.delaySeconds = action.getDelaySeconds();
         }
@@ -1790,7 +1828,7 @@ public class CitizensUI {
                             openCitizensGUI(playerRef, store, Tab.MANAGE, "", groupName));
                 } else {
                     // Citizen action listeners
-                    CitizenData citizen = item.getCitizen();
+                    CitizenData citizen = item.getRawCitizen();
                     final String cid = citizen.getId();
 
                     page.addEventListener("tp-" + cid, CustomUIEventBindingType.Activating, event -> {
@@ -1897,6 +1935,47 @@ public class CitizensUI {
                         // Copy respawn settings
                         clonedCitizen.setRespawnOnDeath(citizen.isRespawnOnDeath());
                         clonedCitizen.setRespawnDelaySeconds(citizen.getRespawnDelaySeconds());
+
+                        // Copy config objects
+                        CombatConfig clonedCombat = new CombatConfig();
+                        clonedCombat.copyFrom(citizen.getCombatConfig());
+                        clonedCitizen.setCombatConfig(clonedCombat);
+
+                        DetectionConfig clonedDetection = new DetectionConfig();
+                        clonedDetection.copyFrom(citizen.getDetectionConfig());
+                        clonedCitizen.setDetectionConfig(clonedDetection);
+
+                        PathConfig clonedPath = new PathConfig();
+                        clonedPath.copyFrom(citizen.getPathConfig());
+                        clonedCitizen.setPathConfig(clonedPath);
+
+                        clonedCitizen.setMaxHealth(citizen.getMaxHealth());
+                        clonedCitizen.setLeashDistance(citizen.getLeashDistance());
+                        clonedCitizen.setDefaultNpcAttitude(citizen.getDefaultNpcAttitude());
+                        clonedCitizen.setApplySeparation(citizen.isApplySeparation());
+
+                        // Copy extended Template_Citizen parameters
+                        clonedCitizen.setDropList(citizen.getDropList());
+                        clonedCitizen.setRunThreshold(citizen.getRunThreshold());
+                        clonedCitizen.setWakingIdleBehaviorComponent(citizen.getWakingIdleBehaviorComponent());
+                        clonedCitizen.setDayFlavorAnimation(citizen.getDayFlavorAnimation());
+                        clonedCitizen.setDayFlavorAnimationLengthMin(citizen.getDayFlavorAnimationLengthMin());
+                        clonedCitizen.setDayFlavorAnimationLengthMax(citizen.getDayFlavorAnimationLengthMax());
+                        clonedCitizen.setAttitudeGroup(citizen.getAttitudeGroup());
+                        clonedCitizen.setNameTranslationKey(citizen.getNameTranslationKey());
+                        clonedCitizen.setBreathesInWater(citizen.isBreathesInWater());
+                        clonedCitizen.setLeashMinPlayerDistance(citizen.getLeashMinPlayerDistance());
+                        clonedCitizen.setLeashTimerMin(citizen.getLeashTimerMin());
+                        clonedCitizen.setLeashTimerMax(citizen.getLeashTimerMax());
+                        clonedCitizen.setHardLeashDistance(citizen.getHardLeashDistance());
+                        clonedCitizen.setDefaultHotbarSlot(citizen.getDefaultHotbarSlot());
+                        clonedCitizen.setRandomIdleHotbarSlot(citizen.getRandomIdleHotbarSlot());
+                        clonedCitizen.setChanceToEquipFromIdleHotbarSlot(citizen.getChanceToEquipFromIdleHotbarSlot());
+                        clonedCitizen.setDefaultOffHandSlot(citizen.getDefaultOffHandSlot());
+                        clonedCitizen.setNighttimeOffhandSlot(citizen.getNighttimeOffhandSlot());
+                        clonedCitizen.setCombatMessageTargetGroups(new ArrayList<>(citizen.getCombatMessageTargetGroups()));
+                        clonedCitizen.setFlockArray(new ArrayList<>(citizen.getFlockArray()));
+                        clonedCitizen.setDisableDamageGroups(new ArrayList<>(citizen.getDisableDamageGroups()));
 
                         plugin.getCitizensManager().addCitizen(clonedCitizen, true);
                         playerRef.sendMessage(Message.raw("Citizen '" + citizen.getName() + "' cloned at your position!").color(Color.GREEN));
@@ -2555,7 +2634,7 @@ public class CitizensUI {
                                    @Nonnull String citizenId, @Nonnull List<CommandAction> actions,
                                    boolean isCreating, @Nonnull CommandAction command, int editIndex) {
         TemplateProcessor template = createBaseTemplate()
-                .setVariable("command", command.getCommand())
+                .setVariable("command", escapeHtml(command.getCommand()))
                 .setVariable("runAsServer", command.isRunAsServer())
                 .setVariable("delaySeconds", command.getDelaySeconds());
 
@@ -2879,16 +2958,33 @@ public class CitizensUI {
                                 </div>
                                 {{/if}}
                             </div>
-                
+
+                            <div class="spacer-md"></div>
+
+                            <!-- Advanced Configuration -->
+                            <div class="section">
+                                {{@sectionHeader:title=Advanced Configuration,description=Configure combat&#44; detection&#44; pathing&#44; and other advanced behavior parameters}}
+
+                                <div class="form-row">
+                                    <button id="combat-config-btn" class="btn-info" style="anchor-width: 200; anchor-height: 44;">Combat Config</button>
+                                    <div class="spacer-h-sm"></div>
+                                    <button id="detection-config-btn" class="btn-info" style="anchor-width: 225; anchor-height: 44;">Detection Config</button>
+                                    <div class="spacer-h-sm"></div>
+                                    <button id="path-config-btn" class="btn-info" style="anchor-width: 200; anchor-height: 44;">Path Config</button>
+                                    <div class="spacer-h-sm"></div>
+                                    <button id="advanced-settings-btn" class="btn-info" style="anchor-width: 240; anchor-height: 44;">Advanced Settings</button>
+                                </div>
+                            </div>
+
                         </div>
-                
+
                         <!-- Footer -->
                         <div class="footer">
                             <button id="cancel-btn" class="btn-ghost">Cancel</button>
                             <div class="spacer-h-md"></div>
                             <button id="done-btn" class="btn-primary" style="anchor-width: 160;">Done</button>
                         </div>
-                
+
                     </div>
                 </div>
                 """);
@@ -3042,6 +3138,23 @@ public class CitizensUI {
             });
         }
 
+        // Advanced config navigation buttons
+        page.addEventListener("combat-config-btn", CustomUIEventBindingType.Activating, event -> {
+            openCombatConfigGUI(playerRef, store, citizen);
+        });
+
+        page.addEventListener("detection-config-btn", CustomUIEventBindingType.Activating, event -> {
+            openDetectionConfigGUI(playerRef, store, citizen);
+        });
+
+        page.addEventListener("path-config-btn", CustomUIEventBindingType.Activating, event -> {
+            openPathConfigGUI(playerRef, store, citizen);
+        });
+
+        page.addEventListener("advanced-settings-btn", CustomUIEventBindingType.Activating, event -> {
+            openAdvancedSettingsGUI(playerRef, store, citizen);
+        });
+
         // Done - save and respawn NPC
         page.addEventListener("done-btn", CustomUIEventBindingType.Activating, event -> {
             plugin.getCitizensManager().updateCitizen(citizen, true);
@@ -3080,7 +3193,7 @@ public class CitizensUI {
 
         TemplateProcessor template = createBaseTemplate()
                 .setVariable("isEditing", isEditing)
-                .setVariable("animName", currentAnimName)
+                .setVariable("animName", escapeHtml(currentAnimName))
                 .setVariable("animSlot", currentSlot)
                 .setVariable("intervalSeconds", currentInterval)
                 .setVariable("proximityRange", currentRange)
@@ -3100,10 +3213,10 @@ public class CitizensUI {
                 .setVariable("stopAnimationOptions", generateAnimationDropdownOptions(currentStopAnimName, citizen.getModelId()))
                 .setVariable("stopAfterTime", currentStopAfterTime)
                 .setVariable("stopTimeSeconds", currentStopTime)
-                .setVariable("stopAnimName", currentStopAnimName)
+                .setVariable("stopAnimName", escapeHtml(currentStopAnimName))
                 .setVariable("stopAnimNameIsEmpty", stopAnimNameIsEmpty)
                 .setVariable("hasDefaultForSlot", defaultAnimForSlot != null)
-                .setVariable("defaultAnimName", defaultAnimForSlot != null ? defaultAnimForSlot : "");
+                .setVariable("defaultAnimName", defaultAnimForSlot != null ? escapeHtml(defaultAnimForSlot) : "");
 
         String html = template.process(getSharedStyles() + """
                 <div class="page-overlay">
@@ -3655,7 +3768,7 @@ public class CitizensUI {
     public void openEditMessageGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store,
                                    @Nonnull CitizenData citizen, @Nonnull CitizenMessage message, int editIndex) {
         TemplateProcessor template = createBaseTemplate()
-                .setVariable("message", message.getMessage());
+                .setVariable("message", escapeHtml(message.getMessage()));
 
         String html = template.process(getSharedStyles() + """
                 <div class="page-overlay">
@@ -3734,5 +3847,1100 @@ public class CitizensUI {
         });
 
         page.open(store);
+    }
+
+    public void openCombatConfigGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store,
+                                     @Nonnull CitizenData citizen) {
+        CombatConfig cc = citizen.getCombatConfig();
+
+        TemplateProcessor template = createBaseTemplate()
+                .setVariable("attackType", cc.getAttackType())
+                .setVariable("attackDistance", cc.getAttackDistance())
+                .setVariable("chaseSpeed", cc.getChaseSpeed())
+                .setVariable("combatBehaviorDistance", cc.getCombatBehaviorDistance())
+                .setVariable("combatStrafeWeight", cc.getCombatStrafeWeight())
+                .setVariable("combatDirectWeight", cc.getCombatDirectWeight())
+                .setVariable("backOffAfterAttack", cc.isBackOffAfterAttack())
+                .setVariable("backOffDistance", cc.getBackOffDistance())
+                .setVariable("desiredAttackDistanceMin", cc.getDesiredAttackDistanceMin())
+                .setVariable("desiredAttackDistanceMax", cc.getDesiredAttackDistanceMax())
+                .setVariable("attackPauseMin", cc.getAttackPauseMin())
+                .setVariable("attackPauseMax", cc.getAttackPauseMax())
+                .setVariable("combatRelativeTurnSpeed", cc.getCombatRelativeTurnSpeed())
+                .setVariable("combatAlwaysMovingWeight", cc.getCombatAlwaysMovingWeight())
+                .setVariable("combatStrafingDurationMin", cc.getCombatStrafingDurationMin())
+                .setVariable("combatStrafingDurationMax", cc.getCombatStrafingDurationMax())
+                .setVariable("combatStrafingFrequencyMin", cc.getCombatStrafingFrequencyMin())
+                .setVariable("combatStrafingFrequencyMax", cc.getCombatStrafingFrequencyMax())
+                .setVariable("combatAttackPreDelayMin", cc.getCombatAttackPreDelayMin())
+                .setVariable("combatAttackPreDelayMax", cc.getCombatAttackPreDelayMax())
+                .setVariable("combatAttackPostDelayMin", cc.getCombatAttackPostDelayMin())
+                .setVariable("combatAttackPostDelayMax", cc.getCombatAttackPostDelayMax())
+                .setVariable("backOffDurationMin", cc.getBackOffDurationMin())
+                .setVariable("backOffDurationMax", cc.getBackOffDurationMax())
+                .setVariable("blockAbility", cc.getBlockAbility())
+                .setVariable("blockProbability", cc.getBlockProbability())
+                .setVariable("combatFleeIfTooCloseDistance", cc.getCombatFleeIfTooCloseDistance())
+                .setVariable("targetSwitchTimerMin", cc.getTargetSwitchTimerMin())
+                .setVariable("targetSwitchTimerMax", cc.getTargetSwitchTimerMax())
+                .setVariable("targetRange", cc.getTargetRange())
+                .setVariable("combatMovingRelativeSpeed", cc.getCombatMovingRelativeSpeed())
+                .setVariable("combatBackwardsRelativeSpeed", cc.getCombatBackwardsRelativeSpeed())
+                .setVariable("useCombatActionEvaluator", cc.isUseCombatActionEvaluator());
+
+        String html = template.process(getSharedStyles() + """
+                <div class="page-overlay">
+                    <div class="main-container" style="layout-mode: TopScrolling; anchor-width: 850; anchor-height: 900;">
+
+                        <!-- Header -->
+                        <div class="header">
+                            <div class="header-content">
+                                <p class="header-title">Combat Configuration</p>
+                                <p class="header-subtitle">Advanced combat parameters for this citizen</p>
+                            </div>
+                        </div>
+
+                        <!-- Body -->
+                        <div class="body">
+
+                            <!-- Attack Settings -->
+                            <div class="section">
+                                {{@sectionHeader:title=Attack Settings,description=Configure attack type, distance, and timing}}
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@formField:id=attack-type,label=Attack Type,value={{$attackType}},placeholder=Root_NPC_Attack_Melee,hint=Attack interaction ID}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 0; anchor-width: 160;">
+                                        <button id="auto-resolve-btn" class="btn-secondary" style="anchor-width: 150; anchor-height: 38;">Auto Resolve</button>
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=attack-distance,label=Attack Distance,value={{$attackDistance}},placeholder=2.0,min=0,max=50,step=0.5,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=chase-speed,label=Chase Speed,value={{$chaseSpeed}},placeholder=0.67,min=0,max=5,step=0.01,decimals=2}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=target-range,label=Target Range,value={{$targetRange}},placeholder=4.0,min=0,max=100,step=0.5,decimals=1}}
+                                    </div>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=desired-attack-dist-min,label=Desired Attack Dist Min,value={{$desiredAttackDistanceMin}},placeholder=1.5,min=0,max=50,step=0.1,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=desired-attack-dist-max,label=Desired Attack Dist Max,value={{$desiredAttackDistanceMax}},placeholder=1.5,min=0,max=50,step=0.1,decimals=1}}
+                                    </div>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=attack-pause-min,label=Attack Pause Min,value={{$attackPauseMin}},placeholder=1.5,min=0,max=30,step=0.1,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=attack-pause-max,label=Attack Pause Max,value={{$attackPauseMax}},placeholder=2.0,min=0,max=30,step=0.1,decimals=1}}
+                                    </div>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=attack-pre-delay-min,label=Pre-Delay Min,value={{$combatAttackPreDelayMin}},placeholder=0.2,min=0,max=10,step=0.1,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=attack-pre-delay-max,label=Pre-Delay Max,value={{$combatAttackPreDelayMax}},placeholder=0.2,min=0,max=10,step=0.1,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=attack-post-delay-min,label=Post-Delay Min,value={{$combatAttackPostDelayMin}},placeholder=0.2,min=0,max=10,step=0.1,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=attack-post-delay-max,label=Post-Delay Max,value={{$combatAttackPostDelayMax}},placeholder=0.2,min=0,max=10,step=0.1,decimals=1}}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="spacer-md"></div>
+
+                            <!-- Combat Movement -->
+                            <div class="section">
+                                {{@sectionHeader:title=Combat Movement,description=Movement behavior during combat}}
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=combat-behavior-distance,label=Behavior Distance,value={{$combatBehaviorDistance}},placeholder=5.0,min=0,max=100,step=0.5,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=combat-turn-speed,label=Turn Speed,value={{$combatRelativeTurnSpeed}},placeholder=1.5,min=0,max=10,step=0.1,decimals=1}}
+                                    </div>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=combat-direct-weight,label=Direct Weight,value={{$combatDirectWeight}},placeholder=10,min=0,max=100,step=1,decimals=0}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=combat-strafe-weight,label=Strafe Weight,value={{$combatStrafeWeight}},placeholder=10,min=0,max=100,step=1,decimals=0}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=combat-always-moving-weight,label=Always Moving,value={{$combatAlwaysMovingWeight}},placeholder=0,min=0,max=100,step=1,decimals=0}}
+                                    </div>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=strafe-duration-min,label=Strafe Dur Min,value={{$combatStrafingDurationMin}},placeholder=1.0,min=0,max=30,step=0.1,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=strafe-duration-max,label=Strafe Dur Max,value={{$combatStrafingDurationMax}},placeholder=1.0,min=0,max=30,step=0.1,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=strafe-freq-min,label=Strafe Freq Min,value={{$combatStrafingFrequencyMin}},placeholder=2.0,min=0,max=30,step=0.1,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=strafe-freq-max,label=Strafe Freq Max,value={{$combatStrafingFrequencyMax}},placeholder=2.0,min=0,max=30,step=0.1,decimals=1}}
+                                    </div>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=combat-moving-speed,label=Moving Speed,value={{$combatMovingRelativeSpeed}},placeholder=0.6,min=0,max=5,step=0.05,decimals=2}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=combat-backwards-speed,label=Backwards Speed,value={{$combatBackwardsRelativeSpeed}},placeholder=0.3,min=0,max=5,step=0.05,decimals=2}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=flee-too-close,label=Flee If Close,value={{$combatFleeIfTooCloseDistance}},placeholder=0,min=0,max=50,step=0.5,decimals=1}}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="spacer-md"></div>
+
+                            <!-- Back Off & Blocking -->
+                            <div class="section">
+                                {{@sectionHeader:title=Back Off & Blocking,description=Retreat and blocking behavior}}
+                                {{@checkbox:id=back-off-toggle,label=Back Off After Attack,checked={{$backOffAfterAttack}},description=NPC retreats after attacking}}
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=back-off-distance,label=Back Off Distance,value={{$backOffDistance}},placeholder=4.0,min=0,max=50,step=0.5,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=back-off-dur-min,label=Back Off Dur Min,value={{$backOffDurationMin}},placeholder=2.0,min=0,max=30,step=0.1,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=back-off-dur-max,label=Back Off Dur Max,value={{$backOffDurationMax}},placeholder=3.0,min=0,max=30,step=0.1,decimals=1}}
+                                    </div>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@formField:id=block-ability,label=Block Ability,value={{$blockAbility}},placeholder=Shield_Block,hint=Ability used for blocking}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=block-probability,label=Block Probability %,value={{$blockProbability}},placeholder=50,min=0,max=100,step=1,decimals=0}}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="spacer-md"></div>
+
+                            <!-- Target Switching -->
+                            <div class="section">
+                                {{@sectionHeader:title=Target & Evaluator,description=Target switching and combat action evaluator}}
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=target-switch-min,label=Switch Timer Min,value={{$targetSwitchTimerMin}},placeholder=5.0,min=0,max=60,step=0.5,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=target-switch-max,label=Switch Timer Max,value={{$targetSwitchTimerMax}},placeholder=5.0,min=0,max=60,step=0.5,decimals=1}}
+                                    </div>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                {{@checkbox:id=use-combat-evaluator,label=Use Combat Action Evaluator,checked={{$useCombatActionEvaluator}},description=Enable advanced combat action evaluation}}
+                            </div>
+
+                        </div>
+
+                        <!-- Footer -->
+                        <div class="footer">
+                            <button id="cancel-btn" class="btn-ghost">Back</button>
+                            <div class="spacer-h-md"></div>
+                            <button id="save-btn" class="btn-primary" style="anchor-width: 200;">Save Combat Config</button>
+                        </div>
+
+                    </div>
+                </div>
+                """);
+
+        PageBuilder page = PageBuilder.pageForPlayer(playerRef)
+                .withLifetime(CustomPageLifetime.CanDismiss)
+                .fromHtml(html);
+
+        setupCombatConfigListeners(page, playerRef, store, citizen);
+
+        page.open(store);
+    }
+
+    private void setupCombatConfigListeners(PageBuilder page, PlayerRef playerRef, Store<EntityStore> store,
+                                            CitizenData citizen) {
+        CombatConfig cc = citizen.getCombatConfig();
+
+        final String[] attackType = {cc.getAttackType()};
+        final float[] attackDistance = {cc.getAttackDistance()};
+        final float[] chaseSpeed = {cc.getChaseSpeed()};
+        final float[] combatBehaviorDistance = {cc.getCombatBehaviorDistance()};
+        final int[] combatStrafeWeight = {cc.getCombatStrafeWeight()};
+        final int[] combatDirectWeight = {cc.getCombatDirectWeight()};
+        final boolean[] backOffAfterAttack = {cc.isBackOffAfterAttack()};
+        final float[] backOffDistance = {cc.getBackOffDistance()};
+        final float[] desiredAttackDistMin = {cc.getDesiredAttackDistanceMin()};
+        final float[] desiredAttackDistMax = {cc.getDesiredAttackDistanceMax()};
+        final float[] attackPauseMin = {cc.getAttackPauseMin()};
+        final float[] attackPauseMax = {cc.getAttackPauseMax()};
+        final float[] combatTurnSpeed = {cc.getCombatRelativeTurnSpeed()};
+        final int[] combatAlwaysMoving = {cc.getCombatAlwaysMovingWeight()};
+        final float[] strafeDurMin = {cc.getCombatStrafingDurationMin()};
+        final float[] strafeDurMax = {cc.getCombatStrafingDurationMax()};
+        final float[] strafeFreqMin = {cc.getCombatStrafingFrequencyMin()};
+        final float[] strafeFreqMax = {cc.getCombatStrafingFrequencyMax()};
+        final float[] preDelayMin = {cc.getCombatAttackPreDelayMin()};
+        final float[] preDelayMax = {cc.getCombatAttackPreDelayMax()};
+        final float[] postDelayMin = {cc.getCombatAttackPostDelayMin()};
+        final float[] postDelayMax = {cc.getCombatAttackPostDelayMax()};
+        final float[] backOffDurMin = {cc.getBackOffDurationMin()};
+        final float[] backOffDurMax = {cc.getBackOffDurationMax()};
+        final String[] blockAbility = {cc.getBlockAbility()};
+        final int[] blockProbability = {cc.getBlockProbability()};
+        final float[] fleeTooClose = {cc.getCombatFleeIfTooCloseDistance()};
+        final float[] targetSwitchMin = {cc.getTargetSwitchTimerMin()};
+        final float[] targetSwitchMax = {cc.getTargetSwitchTimerMax()};
+        final float[] targetRange = {cc.getTargetRange()};
+        final float[] movingSpeed = {cc.getCombatMovingRelativeSpeed()};
+        final float[] backwardsSpeed = {cc.getCombatBackwardsRelativeSpeed()};
+        final boolean[] useCombatEvaluator = {cc.isUseCombatActionEvaluator()};
+
+        // Text fields
+        page.addEventListener("attack-type", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            attackType[0] = ctx.getValue("attack-type", String.class).orElse("Root_NPC_Attack_Melee");
+        });
+        page.addEventListener("block-ability", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            blockAbility[0] = ctx.getValue("block-ability", String.class).orElse("Shield_Block");
+        });
+
+        // Auto-resolve attack type
+        page.addEventListener("auto-resolve-btn", CustomUIEventBindingType.Activating, event -> {
+            plugin.getCitizensManager().autoResolveAttackType(citizen);
+            playerRef.sendMessage(Message.raw("Attack type resolved to: " + citizen.getCombatConfig().getAttackType()).color(Color.GREEN));
+            openCombatConfigGUI(playerRef, store, citizen);
+        });
+
+        // Number fields
+        page.addEventListener("attack-distance", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("attack-distance", Double.class).ifPresent(v -> attackDistance[0] = v.floatValue());
+        });
+        page.addEventListener("chase-speed", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("chase-speed", Double.class).ifPresent(v -> chaseSpeed[0] = v.floatValue());
+        });
+        page.addEventListener("target-range", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("target-range", Double.class).ifPresent(v -> targetRange[0] = v.floatValue());
+        });
+        page.addEventListener("combat-behavior-distance", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("combat-behavior-distance", Double.class).ifPresent(v -> combatBehaviorDistance[0] = v.floatValue());
+        });
+        page.addEventListener("combat-turn-speed", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("combat-turn-speed", Double.class).ifPresent(v -> combatTurnSpeed[0] = v.floatValue());
+        });
+        page.addEventListener("combat-direct-weight", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("combat-direct-weight", Double.class).ifPresent(v -> combatDirectWeight[0] = v.intValue());
+        });
+        page.addEventListener("combat-strafe-weight", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("combat-strafe-weight", Double.class).ifPresent(v -> combatStrafeWeight[0] = v.intValue());
+        });
+        page.addEventListener("combat-always-moving-weight", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("combat-always-moving-weight", Double.class).ifPresent(v -> combatAlwaysMoving[0] = v.intValue());
+        });
+        page.addEventListener("desired-attack-dist-min", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("desired-attack-dist-min", Double.class).ifPresent(v -> desiredAttackDistMin[0] = v.floatValue());
+        });
+        page.addEventListener("desired-attack-dist-max", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("desired-attack-dist-max", Double.class).ifPresent(v -> desiredAttackDistMax[0] = v.floatValue());
+        });
+        page.addEventListener("attack-pause-min", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("attack-pause-min", Double.class).ifPresent(v -> attackPauseMin[0] = v.floatValue());
+        });
+        page.addEventListener("attack-pause-max", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("attack-pause-max", Double.class).ifPresent(v -> attackPauseMax[0] = v.floatValue());
+        });
+        page.addEventListener("attack-pre-delay-min", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("attack-pre-delay-min", Double.class).ifPresent(v -> preDelayMin[0] = v.floatValue());
+        });
+        page.addEventListener("attack-pre-delay-max", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("attack-pre-delay-max", Double.class).ifPresent(v -> preDelayMax[0] = v.floatValue());
+        });
+        page.addEventListener("attack-post-delay-min", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("attack-post-delay-min", Double.class).ifPresent(v -> postDelayMin[0] = v.floatValue());
+        });
+        page.addEventListener("attack-post-delay-max", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("attack-post-delay-max", Double.class).ifPresent(v -> postDelayMax[0] = v.floatValue());
+        });
+        page.addEventListener("strafe-duration-min", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("strafe-duration-min", Double.class).ifPresent(v -> strafeDurMin[0] = v.floatValue());
+        });
+        page.addEventListener("strafe-duration-max", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("strafe-duration-max", Double.class).ifPresent(v -> strafeDurMax[0] = v.floatValue());
+        });
+        page.addEventListener("strafe-freq-min", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("strafe-freq-min", Double.class).ifPresent(v -> strafeFreqMin[0] = v.floatValue());
+        });
+        page.addEventListener("strafe-freq-max", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("strafe-freq-max", Double.class).ifPresent(v -> strafeFreqMax[0] = v.floatValue());
+        });
+        page.addEventListener("combat-moving-speed", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("combat-moving-speed", Double.class).ifPresent(v -> movingSpeed[0] = v.floatValue());
+        });
+        page.addEventListener("combat-backwards-speed", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("combat-backwards-speed", Double.class).ifPresent(v -> backwardsSpeed[0] = v.floatValue());
+        });
+        page.addEventListener("flee-too-close", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("flee-too-close", Double.class).ifPresent(v -> fleeTooClose[0] = v.floatValue());
+        });
+        page.addEventListener("back-off-distance", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("back-off-distance", Double.class).ifPresent(v -> backOffDistance[0] = v.floatValue());
+        });
+        page.addEventListener("back-off-dur-min", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("back-off-dur-min", Double.class).ifPresent(v -> backOffDurMin[0] = v.floatValue());
+        });
+        page.addEventListener("back-off-dur-max", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("back-off-dur-max", Double.class).ifPresent(v -> backOffDurMax[0] = v.floatValue());
+        });
+        page.addEventListener("block-probability", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("block-probability", Double.class).ifPresent(v -> blockProbability[0] = v.intValue());
+        });
+        page.addEventListener("target-switch-min", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("target-switch-min", Double.class).ifPresent(v -> targetSwitchMin[0] = v.floatValue());
+        });
+        page.addEventListener("target-switch-max", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("target-switch-max", Double.class).ifPresent(v -> targetSwitchMax[0] = v.floatValue());
+        });
+
+        // Checkboxes
+        page.addEventListener("back-off-toggle", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("back-off-toggle", Boolean.class).ifPresent(v -> backOffAfterAttack[0] = v);
+        });
+        page.addEventListener("use-combat-evaluator", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("use-combat-evaluator", Boolean.class).ifPresent(v -> useCombatEvaluator[0] = v);
+        });
+
+        // Save
+        page.addEventListener("save-btn", CustomUIEventBindingType.Activating, event -> {
+            cc.setAttackType(attackType[0]);
+            cc.setAttackDistance(attackDistance[0]);
+            cc.setChaseSpeed(chaseSpeed[0]);
+            cc.setCombatBehaviorDistance(combatBehaviorDistance[0]);
+            cc.setCombatStrafeWeight(combatStrafeWeight[0]);
+            cc.setCombatDirectWeight(combatDirectWeight[0]);
+            cc.setBackOffAfterAttack(backOffAfterAttack[0]);
+            cc.setBackOffDistance(backOffDistance[0]);
+            cc.setDesiredAttackDistanceMin(desiredAttackDistMin[0]);
+            cc.setDesiredAttackDistanceMax(desiredAttackDistMax[0]);
+            cc.setAttackPauseMin(attackPauseMin[0]);
+            cc.setAttackPauseMax(attackPauseMax[0]);
+            cc.setCombatRelativeTurnSpeed(combatTurnSpeed[0]);
+            cc.setCombatAlwaysMovingWeight(combatAlwaysMoving[0]);
+            cc.setCombatStrafingDurationMin(strafeDurMin[0]);
+            cc.setCombatStrafingDurationMax(strafeDurMax[0]);
+            cc.setCombatStrafingFrequencyMin(strafeFreqMin[0]);
+            cc.setCombatStrafingFrequencyMax(strafeFreqMax[0]);
+            cc.setCombatAttackPreDelayMin(preDelayMin[0]);
+            cc.setCombatAttackPreDelayMax(preDelayMax[0]);
+            cc.setCombatAttackPostDelayMin(postDelayMin[0]);
+            cc.setCombatAttackPostDelayMax(postDelayMax[0]);
+            cc.setBackOffDurationMin(backOffDurMin[0]);
+            cc.setBackOffDurationMax(backOffDurMax[0]);
+            cc.setBlockAbility(blockAbility[0]);
+            cc.setBlockProbability(blockProbability[0]);
+            cc.setCombatFleeIfTooCloseDistance(fleeTooClose[0]);
+            cc.setTargetSwitchTimerMin(targetSwitchMin[0]);
+            cc.setTargetSwitchTimerMax(targetSwitchMax[0]);
+            cc.setTargetRange(targetRange[0]);
+            cc.setCombatMovingRelativeSpeed(movingSpeed[0]);
+            cc.setCombatBackwardsRelativeSpeed(backwardsSpeed[0]);
+            cc.setUseCombatActionEvaluator(useCombatEvaluator[0]);
+            plugin.getCitizensManager().saveCitizen(citizen);
+            playerRef.sendMessage(Message.raw("Combat config saved!").color(Color.GREEN));
+            openBehaviorsGUI(playerRef, store, citizen);
+        });
+
+        page.addEventListener("cancel-btn", CustomUIEventBindingType.Activating, event -> {
+            openBehaviorsGUI(playerRef, store, citizen);
+        });
+    }
+
+    public void openDetectionConfigGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store,
+                                        @Nonnull CitizenData citizen) {
+        DetectionConfig dc = citizen.getDetectionConfig();
+
+        TemplateProcessor template = createBaseTemplate()
+                .setVariable("viewRange", dc.getViewRange())
+                .setVariable("viewSector", dc.getViewSector())
+                .setVariable("hearingRange", dc.getHearingRange())
+                .setVariable("absoluteDetectionRange", dc.getAbsoluteDetectionRange())
+                .setVariable("alertedRange", dc.getAlertedRange())
+                .setVariable("alertedTimeMin", dc.getAlertedTimeMin())
+                .setVariable("alertedTimeMax", dc.getAlertedTimeMax())
+                .setVariable("chanceCallForHelp", dc.getChanceToBeAlertedWhenReceivingCallForHelp())
+                .setVariable("confusedTimeMin", dc.getConfusedTimeMin())
+                .setVariable("confusedTimeMax", dc.getConfusedTimeMax())
+                .setVariable("searchTimeMin", dc.getSearchTimeMin())
+                .setVariable("searchTimeMax", dc.getSearchTimeMax())
+                .setVariable("investigateRange", dc.getInvestigateRange());
+
+        String html = template.process(getSharedStyles() + """
+                <div class="page-overlay">
+                    <div class="main-container" style="anchor-width: 800; anchor-height: 800;">
+
+                        <!-- Header -->
+                        <div class="header">
+                            <div class="header-content">
+                                <p class="header-title">Detection Configuration</p>
+                                <p class="header-subtitle">How this citizen detects and responds to threats</p>
+                            </div>
+                        </div>
+
+                        <!-- Body -->
+                        <div class="body">
+
+                            <!-- Primary Detection -->
+                            <div class="section">
+                                {{@sectionHeader:title=Primary Detection,description=Vision and hearing ranges}}
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=view-range,label=View Range,value={{$viewRange}},placeholder=15,min=0,max=200,step=1,decimals=0}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=view-sector,label=View Sector (degrees),value={{$viewSector}},placeholder=180,min=0,max=360,step=5,decimals=0}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=hearing-range,label=Hearing Range,value={{$hearingRange}},placeholder=8,min=0,max=200,step=1,decimals=0}}
+                                    </div>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=absolute-detection,label=Absolute Detection Range,value={{$absoluteDetectionRange}},placeholder=2,min=0,max=100,step=0.5,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=investigate-range,label=Investigate Range,value={{$investigateRange}},placeholder=40,min=0,max=200,step=1,decimals=0}}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="spacer-md"></div>
+
+                            <!-- Alert Settings -->
+                            <div class="section">
+                                {{@sectionHeader:title=Alert Settings,description=How the citizen reacts when alerted}}
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=alerted-range,label=Alerted Range,value={{$alertedRange}},placeholder=45,min=0,max=200,step=1,decimals=0}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=alerted-time-min,label=Alerted Time Min,value={{$alertedTimeMin}},placeholder=1.0,min=0,max=30,step=0.1,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=alerted-time-max,label=Alerted Time Max,value={{$alertedTimeMax}},placeholder=2.0,min=0,max=30,step=0.1,decimals=1}}
+                                    </div>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                <div style="layout: center; flex-weight: 0;">
+                                    <div style="anchor-width: 350; flex-weight: 0;">
+                                        {{@numberField:id=chance-call-help,label=Call For Help Chance %,value={{$chanceCallForHelp}},placeholder=70,min=0,max=100,step=1,decimals=0}}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="spacer-md"></div>
+
+                            <!-- Search & Confusion -->
+                            <div class="section">
+                                {{@sectionHeader:title=Search & Confusion,description=Behavior when target is lost}}
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=confused-time-min,label=Confused Time Min,value={{$confusedTimeMin}},placeholder=1.0,min=0,max=30,step=0.1,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=confused-time-max,label=Confused Time Max,value={{$confusedTimeMax}},placeholder=2.0,min=0,max=30,step=0.1,decimals=1}}
+                                    </div>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=search-time-min,label=Search Time Min,value={{$searchTimeMin}},placeholder=10.0,min=0,max=120,step=0.5,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=search-time-max,label=Search Time Max,value={{$searchTimeMax}},placeholder=14.0,min=0,max=120,step=0.5,decimals=1}}
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+
+                        <!-- Footer -->
+                        <div class="footer">
+                            <button id="cancel-btn" class="btn-ghost">Back</button>
+                            <div class="spacer-h-md"></div>
+                            <button id="save-btn" class="btn-primary" style="anchor-width: 220;">Save Detection Config</button>
+                        </div>
+
+                    </div>
+                </div>
+                """);
+
+        PageBuilder page = PageBuilder.pageForPlayer(playerRef)
+                .withLifetime(CustomPageLifetime.CanDismiss)
+                .fromHtml(html);
+
+        setupDetectionConfigListeners(page, playerRef, store, citizen);
+
+        page.open(store);
+    }
+
+    private void setupDetectionConfigListeners(PageBuilder page, PlayerRef playerRef, Store<EntityStore> store,
+                                               CitizenData citizen) {
+        DetectionConfig dc = citizen.getDetectionConfig();
+
+        final float[] viewRange = {dc.getViewRange()};
+        final float[] viewSector = {dc.getViewSector()};
+        final float[] hearingRange = {dc.getHearingRange()};
+        final float[] absoluteDetection = {dc.getAbsoluteDetectionRange()};
+        final float[] alertedRange = {dc.getAlertedRange()};
+        final float[] alertedTimeMin = {dc.getAlertedTimeMin()};
+        final float[] alertedTimeMax = {dc.getAlertedTimeMax()};
+        final int[] chanceCallHelp = {dc.getChanceToBeAlertedWhenReceivingCallForHelp()};
+        final float[] confusedTimeMin = {dc.getConfusedTimeMin()};
+        final float[] confusedTimeMax = {dc.getConfusedTimeMax()};
+        final float[] searchTimeMin = {dc.getSearchTimeMin()};
+        final float[] searchTimeMax = {dc.getSearchTimeMax()};
+        final float[] investigateRange = {dc.getInvestigateRange()};
+
+        page.addEventListener("view-range", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("view-range", Double.class).ifPresent(v -> viewRange[0] = v.floatValue());
+        });
+        page.addEventListener("view-sector", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("view-sector", Double.class).ifPresent(v -> viewSector[0] = v.floatValue());
+        });
+        page.addEventListener("hearing-range", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("hearing-range", Double.class).ifPresent(v -> hearingRange[0] = v.floatValue());
+        });
+        page.addEventListener("absolute-detection", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("absolute-detection", Double.class).ifPresent(v -> absoluteDetection[0] = v.floatValue());
+        });
+        page.addEventListener("investigate-range", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("investigate-range", Double.class).ifPresent(v -> investigateRange[0] = v.floatValue());
+        });
+        page.addEventListener("alerted-range", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("alerted-range", Double.class).ifPresent(v -> alertedRange[0] = v.floatValue());
+        });
+        page.addEventListener("alerted-time-min", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("alerted-time-min", Double.class).ifPresent(v -> alertedTimeMin[0] = v.floatValue());
+        });
+        page.addEventListener("alerted-time-max", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("alerted-time-max", Double.class).ifPresent(v -> alertedTimeMax[0] = v.floatValue());
+        });
+        page.addEventListener("chance-call-help", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("chance-call-help", Double.class).ifPresent(v -> chanceCallHelp[0] = v.intValue());
+        });
+        page.addEventListener("confused-time-min", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("confused-time-min", Double.class).ifPresent(v -> confusedTimeMin[0] = v.floatValue());
+        });
+        page.addEventListener("confused-time-max", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("confused-time-max", Double.class).ifPresent(v -> confusedTimeMax[0] = v.floatValue());
+        });
+        page.addEventListener("search-time-min", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("search-time-min", Double.class).ifPresent(v -> searchTimeMin[0] = v.floatValue());
+        });
+        page.addEventListener("search-time-max", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("search-time-max", Double.class).ifPresent(v -> searchTimeMax[0] = v.floatValue());
+        });
+
+        // Save
+        page.addEventListener("save-btn", CustomUIEventBindingType.Activating, event -> {
+            dc.setViewRange(viewRange[0]);
+            dc.setViewSector(viewSector[0]);
+            dc.setHearingRange(hearingRange[0]);
+            dc.setAbsoluteDetectionRange(absoluteDetection[0]);
+            dc.setAlertedRange(alertedRange[0]);
+            dc.setAlertedTimeMin(alertedTimeMin[0]);
+            dc.setAlertedTimeMax(alertedTimeMax[0]);
+            dc.setChanceToBeAlertedWhenReceivingCallForHelp(chanceCallHelp[0]);
+            dc.setConfusedTimeMin(confusedTimeMin[0]);
+            dc.setConfusedTimeMax(confusedTimeMax[0]);
+            dc.setSearchTimeMin(searchTimeMin[0]);
+            dc.setSearchTimeMax(searchTimeMax[0]);
+            dc.setInvestigateRange(investigateRange[0]);
+            plugin.getCitizensManager().saveCitizen(citizen);
+            playerRef.sendMessage(Message.raw("Detection config saved!").color(Color.GREEN));
+            openBehaviorsGUI(playerRef, store, citizen);
+        });
+
+        page.addEventListener("cancel-btn", CustomUIEventBindingType.Activating, event -> {
+            openBehaviorsGUI(playerRef, store, citizen);
+        });
+    }
+
+    public void openPathConfigGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store,
+                                   @Nonnull CitizenData citizen) {
+        PathConfig pc = citizen.getPathConfig();
+
+        TemplateProcessor template = createBaseTemplate()
+                .setVariable("followPath", pc.isFollowPath())
+                .setVariable("pathName", escapeHtml(pc.getPathName()))
+                .setVariable("patrol", pc.isPatrol())
+                .setVariable("patrolWanderDistance", pc.getPatrolWanderDistance())
+                .setVariable("leashMinPlayerDistance", citizen.getLeashMinPlayerDistance())
+                .setVariable("leashTimerMin", citizen.getLeashTimerMin())
+                .setVariable("leashTimerMax", citizen.getLeashTimerMax())
+                .setVariable("hardLeashDistance", citizen.getHardLeashDistance());
+
+        String html = template.process(getSharedStyles() + """
+                <div class="page-overlay">
+                    <div class="main-container" style="anchor-width: 750; anchor-height: 700;">
+
+                        <!-- Header -->
+                        <div class="header">
+                            <div class="header-content">
+                                <p class="header-title">Path & Leash Configuration</p>
+                                <p class="header-subtitle">Configure patrolling, path following, and leash settings</p>
+                            </div>
+                        </div>
+
+                        <!-- Body -->
+                        <div class="body">
+
+                            <!-- Path Settings -->
+                            <div class="section">
+                                {{@sectionHeader:title=Path Settings,description=Enable path following and patrol behavior}}
+                                {{@checkbox:id=follow-path,label=Follow Path,checked={{$followPath}},description=NPC follows a named path}}
+                                <div class="spacer-xs"></div>
+                                {{@formField:id=path-name,label=Path Name,value={{$pathName}},placeholder=Enter path name...,hint=Name of the path to follow}}
+                                <div class="spacer-sm"></div>
+                                {{@checkbox:id=patrol,label=Patrol,checked={{$patrol}},description=NPC patrols back and forth along the path}}
+                                <div class="spacer-xs"></div>
+                                <div style="layout: center; flex-weight: 0;">
+                                    <div style="anchor-width: 350; flex-weight: 0;">
+                                        {{@numberField:id=patrol-wander-distance,label=Patrol Wander Distance,value={{$patrolWanderDistance}},placeholder=25,min=1,max=200,step=1,decimals=0}}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="spacer-md"></div>
+
+                            <!-- Leash Settings -->
+                            <div class="section">
+                                {{@sectionHeader:title=Leash Settings,description=How far the NPC can stray from its origin}}
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=leash-min-player-dist,label=Min Player Distance,value={{$leashMinPlayerDistance}},placeholder=4.0,min=0,max=100,step=0.5,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=hard-leash-distance,label=Hard Leash Distance,value={{$hardLeashDistance}},placeholder=200,min=1,max=1000,step=5,decimals=0}}
+                                    </div>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=leash-timer-min,label=Leash Timer Min,value={{$leashTimerMin}},placeholder=3.0,min=0,max=60,step=0.5,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=leash-timer-max,label=Leash Timer Max,value={{$leashTimerMax}},placeholder=5.0,min=0,max=60,step=0.5,decimals=1}}
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+
+                        <!-- Footer -->
+                        <div class="footer">
+                            <button id="cancel-btn" class="btn-ghost">Back</button>
+                            <div class="spacer-h-md"></div>
+                            <button id="save-btn" class="btn-primary" style="anchor-width: 200;">Save Path Config</button>
+                        </div>
+
+                    </div>
+                </div>
+                """);
+
+        PageBuilder page = PageBuilder.pageForPlayer(playerRef)
+                .withLifetime(CustomPageLifetime.CanDismiss)
+                .fromHtml(html);
+
+        setupPathConfigListeners(page, playerRef, store, citizen);
+
+        page.open(store);
+    }
+
+    private void setupPathConfigListeners(PageBuilder page, PlayerRef playerRef, Store<EntityStore> store,
+                                          CitizenData citizen) {
+        PathConfig pc = citizen.getPathConfig();
+
+        final boolean[] followPath = {pc.isFollowPath()};
+        final String[] pathName = {pc.getPathName()};
+        final boolean[] patrol = {pc.isPatrol()};
+        final float[] patrolWanderDist = {pc.getPatrolWanderDistance()};
+        final float[] leashMinPlayerDist = {citizen.getLeashMinPlayerDistance()};
+        final float[] leashTimerMin = {citizen.getLeashTimerMin()};
+        final float[] leashTimerMax = {citizen.getLeashTimerMax()};
+        final float[] hardLeashDist = {citizen.getHardLeashDistance()};
+
+        page.addEventListener("follow-path", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("follow-path", Boolean.class).ifPresent(v -> followPath[0] = v);
+        });
+        page.addEventListener("path-name", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            pathName[0] = ctx.getValue("path-name", String.class).orElse("");
+        });
+        page.addEventListener("patrol", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("patrol", Boolean.class).ifPresent(v -> patrol[0] = v);
+        });
+        page.addEventListener("patrol-wander-distance", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("patrol-wander-distance", Double.class).ifPresent(v -> patrolWanderDist[0] = v.floatValue());
+        });
+        page.addEventListener("leash-min-player-dist", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("leash-min-player-dist", Double.class).ifPresent(v -> leashMinPlayerDist[0] = v.floatValue());
+        });
+        page.addEventListener("leash-timer-min", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("leash-timer-min", Double.class).ifPresent(v -> leashTimerMin[0] = v.floatValue());
+        });
+        page.addEventListener("leash-timer-max", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("leash-timer-max", Double.class).ifPresent(v -> leashTimerMax[0] = v.floatValue());
+        });
+        page.addEventListener("hard-leash-distance", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("hard-leash-distance", Double.class).ifPresent(v -> hardLeashDist[0] = v.floatValue());
+        });
+
+        // Save
+        page.addEventListener("save-btn", CustomUIEventBindingType.Activating, event -> {
+            pc.setFollowPath(followPath[0]);
+            pc.setPathName(pathName[0]);
+            pc.setPatrol(patrol[0]);
+            pc.setPatrolWanderDistance(patrolWanderDist[0]);
+            citizen.setLeashMinPlayerDistance(leashMinPlayerDist[0]);
+            citizen.setLeashTimerMin(leashTimerMin[0]);
+            citizen.setLeashTimerMax(leashTimerMax[0]);
+            citizen.setHardLeashDistance(hardLeashDist[0]);
+            plugin.getCitizensManager().saveCitizen(citizen);
+            playerRef.sendMessage(Message.raw("Path config saved!").color(Color.GREEN));
+            openBehaviorsGUI(playerRef, store, citizen);
+        });
+
+        page.addEventListener("cancel-btn", CustomUIEventBindingType.Activating, event -> {
+            openBehaviorsGUI(playerRef, store, citizen);
+        });
+    }
+
+    public void openAdvancedSettingsGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store,
+                                        @Nonnull CitizenData citizen) {
+        TemplateProcessor template = createBaseTemplate()
+                .setVariable("dropList", escapeHtml(citizen.getDropList()))
+                .setVariable("runThreshold", citizen.getRunThreshold())
+                .setVariable("nameTranslationKey", escapeHtml(citizen.getNameTranslationKey()))
+                .setVariable("attitudeGroup", escapeHtml(citizen.getAttitudeGroup()))
+                .setVariable("breathesInWater", citizen.isBreathesInWater())
+                .setVariable("dayFlavorAnimation", escapeHtml(citizen.getDayFlavorAnimation()))
+                .setVariable("dayFlavorAnimLengthMin", citizen.getDayFlavorAnimationLengthMin())
+                .setVariable("dayFlavorAnimLengthMax", citizen.getDayFlavorAnimationLengthMax())
+                .setVariable("wakingIdleBehavior", escapeHtml(citizen.getWakingIdleBehaviorComponent()))
+                .setVariable("defaultHotbarSlot", citizen.getDefaultHotbarSlot())
+                .setVariable("randomIdleHotbarSlot", citizen.getRandomIdleHotbarSlot())
+                .setVariable("chanceEquipIdle", citizen.getChanceToEquipFromIdleHotbarSlot())
+                .setVariable("defaultOffHandSlot", citizen.getDefaultOffHandSlot())
+                .setVariable("nighttimeOffhandSlot", citizen.getNighttimeOffhandSlot())
+                .setVariable("combatMessageTargetGroups", escapeHtml(String.join(", ", citizen.getCombatMessageTargetGroups())))
+                .setVariable("flockArray", escapeHtml(String.join(", ", citizen.getFlockArray())))
+                .setVariable("disableDamageGroups", escapeHtml(String.join(", ", citizen.getDisableDamageGroups())));
+
+        String html = template.process(getSharedStyles() + """
+                <div class="page-overlay">
+                    <div class="main-container" style="layout-mode: TopScrolling; anchor-width: 850; anchor-height: 900;">
+
+                        <!-- Header -->
+                        <div class="header">
+                            <div class="header-content">
+                                <p class="header-title">Advanced Settings</p>
+                                <p class="header-subtitle">Extended Template_Citizen parameters</p>
+                            </div>
+                        </div>
+
+                        <!-- Body -->
+                        <div class="body">
+
+                            <!-- General -->
+                            <div class="section">
+                                {{@sectionHeader:title=General,description=Core identity and behavior settings}}
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@formField:id=name-translation-key,label=Name Translation Key,value={{$nameTranslationKey}},placeholder=Citizen}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@formField:id=attitude-group,label=Attitude Group,value={{$attitudeGroup}},placeholder=Empty}}
+                                    </div>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@formField:id=drop-list,label=Drop List,value={{$dropList}},placeholder=Empty,hint=Loot table reference}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=run-threshold,label=Run Threshold,value={{$runThreshold}},placeholder=0.3,min=0,max=1,step=0.05,decimals=2}}
+                                    </div>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                {{@checkbox:id=breathes-in-water,label=Breathes In Water,checked={{$breathesInWater}},description=Whether this NPC can breathe underwater}}
+                            </div>
+
+                            <div class="spacer-md"></div>
+
+                            <!-- Animations -->
+                            <div class="section">
+                                {{@sectionHeader:title=Idle Behavior,description=Idle and flavor animation settings}}
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@formField:id=waking-idle-behavior,label=Waking Idle Component,value={{$wakingIdleBehavior}},placeholder=Component_Instruction_Waking_Idle}}
+                                    </div>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@formField:id=day-flavor-anim,label=Day Flavor Animation,value={{$dayFlavorAnimation}},placeholder=Leave empty for none}}
+                                    </div>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=day-flavor-len-min,label=Flavor Anim Length Min,value={{$dayFlavorAnimLengthMin}},placeholder=3.0,min=0,max=120,step=0.5,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=day-flavor-len-max,label=Flavor Anim Length Max,value={{$dayFlavorAnimLengthMax}},placeholder=5.0,min=0,max=120,step=0.5,decimals=1}}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="spacer-md"></div>
+
+                            <!-- Hotbar & Equipment -->
+                            <div class="section">
+                                {{@sectionHeader:title=Hotbar & Equipment,description=Default equipment slot configuration}}
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=default-hotbar,label=Default Hotbar Slot,value={{$defaultHotbarSlot}},placeholder=0,min=-1,max=8,step=1,decimals=0}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=random-idle-hotbar,label=Idle Hotbar Slot,value={{$randomIdleHotbarSlot}},placeholder=-1,min=-1,max=8,step=1,decimals=0}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=chance-equip-idle,label=Equip Idle Chance %,value={{$chanceEquipIdle}},placeholder=5,min=0,max=100,step=1,decimals=0}}
+                                    </div>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=default-offhand,label=Default OffHand Slot,value={{$defaultOffHandSlot}},placeholder=-1,min=-1,max=8,step=1,decimals=0}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=nighttime-offhand,label=Nighttime OffHand Slot,value={{$nighttimeOffhandSlot}},placeholder=0,min=-1,max=8,step=1,decimals=0}}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="spacer-md"></div>
+
+                            <!-- Groups & Arrays -->
+                            <div class="section">
+                                {{@sectionHeader:title=Groups & Arrays,description=Comma-separated lists for group memberships}}
+                                {{@formField:id=combat-msg-groups,label=Combat Message Target Groups,value={{$combatMessageTargetGroups}},placeholder=Comma-separated group names,hint=Groups notified during combat}}
+                                <div class="spacer-xs"></div>
+                                {{@formField:id=flock-array,label=Flock Array,value={{$flockArray}},placeholder=Comma-separated flock entries,hint=Flocking behavior groups}}
+                                <div class="spacer-xs"></div>
+                                {{@formField:id=disable-damage-groups,label=Disable Damage Groups,value={{$disableDamageGroups}},placeholder=Self,hint=Groups this NPC cannot damage}}
+                            </div>
+
+                        </div>
+
+                        <!-- Footer -->
+                        <div class="footer">
+                            <button id="cancel-btn" class="btn-ghost">Back</button>
+                            <div class="spacer-h-md"></div>
+                            <button id="save-btn" class="btn-primary" style="anchor-width: 220;">Save Advanced Settings</button>
+                        </div>
+
+                    </div>
+                </div>
+                """);
+
+        PageBuilder page = PageBuilder.pageForPlayer(playerRef)
+                .withLifetime(CustomPageLifetime.CanDismiss)
+                .fromHtml(html);
+
+        setupAdvancedSettingsListeners(page, playerRef, store, citizen);
+
+        page.open(store);
+    }
+
+    private void setupAdvancedSettingsListeners(PageBuilder page, PlayerRef playerRef, Store<EntityStore> store,
+                                                CitizenData citizen) {
+        final String[] dropList = {citizen.getDropList()};
+        final float[] runThreshold = {citizen.getRunThreshold()};
+        final String[] nameTransKey = {citizen.getNameTranslationKey()};
+        final String[] attitudeGroup = {citizen.getAttitudeGroup()};
+        final boolean[] breathesInWater = {citizen.isBreathesInWater()};
+        final String[] dayFlavorAnim = {citizen.getDayFlavorAnimation()};
+        final float[] dayFlavorLenMin = {citizen.getDayFlavorAnimationLengthMin()};
+        final float[] dayFlavorLenMax = {citizen.getDayFlavorAnimationLengthMax()};
+        final String[] wakingIdleBehavior = {citizen.getWakingIdleBehaviorComponent()};
+        final int[] defaultHotbar = {citizen.getDefaultHotbarSlot()};
+        final int[] randomIdleHotbar = {citizen.getRandomIdleHotbarSlot()};
+        final int[] chanceEquipIdle = {citizen.getChanceToEquipFromIdleHotbarSlot()};
+        final int[] defaultOffHand = {citizen.getDefaultOffHandSlot()};
+        final int[] nighttimeOffhand = {citizen.getNighttimeOffhandSlot()};
+        final String[] combatMsgGroups = {String.join(", ", citizen.getCombatMessageTargetGroups())};
+        final String[] flockArray = {String.join(", ", citizen.getFlockArray())};
+        final String[] disableDmgGroups = {String.join(", ", citizen.getDisableDamageGroups())};
+
+        // Text fields
+        page.addEventListener("drop-list", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            dropList[0] = ctx.getValue("drop-list", String.class).orElse("Empty");
+        });
+        page.addEventListener("name-translation-key", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            nameTransKey[0] = ctx.getValue("name-translation-key", String.class).orElse("Citizen");
+        });
+        page.addEventListener("attitude-group", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            attitudeGroup[0] = ctx.getValue("attitude-group", String.class).orElse("Empty");
+        });
+        page.addEventListener("day-flavor-anim", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            dayFlavorAnim[0] = ctx.getValue("day-flavor-anim", String.class).orElse("");
+        });
+        page.addEventListener("waking-idle-behavior", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            wakingIdleBehavior[0] = ctx.getValue("waking-idle-behavior", String.class).orElse("Component_Instruction_Waking_Idle");
+        });
+        page.addEventListener("combat-msg-groups", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            combatMsgGroups[0] = ctx.getValue("combat-msg-groups", String.class).orElse("");
+        });
+        page.addEventListener("flock-array", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            flockArray[0] = ctx.getValue("flock-array", String.class).orElse("");
+        });
+        page.addEventListener("disable-damage-groups", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            disableDmgGroups[0] = ctx.getValue("disable-damage-groups", String.class).orElse("Self");
+        });
+
+        // Number fields
+        page.addEventListener("run-threshold", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("run-threshold", Double.class).ifPresent(v -> runThreshold[0] = v.floatValue());
+        });
+        page.addEventListener("day-flavor-len-min", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("day-flavor-len-min", Double.class).ifPresent(v -> dayFlavorLenMin[0] = v.floatValue());
+        });
+        page.addEventListener("day-flavor-len-max", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("day-flavor-len-max", Double.class).ifPresent(v -> dayFlavorLenMax[0] = v.floatValue());
+        });
+        page.addEventListener("default-hotbar", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("default-hotbar", Double.class).ifPresent(v -> defaultHotbar[0] = v.intValue());
+        });
+        page.addEventListener("random-idle-hotbar", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("random-idle-hotbar", Double.class).ifPresent(v -> randomIdleHotbar[0] = v.intValue());
+        });
+        page.addEventListener("chance-equip-idle", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("chance-equip-idle", Double.class).ifPresent(v -> chanceEquipIdle[0] = v.intValue());
+        });
+        page.addEventListener("default-offhand", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("default-offhand", Double.class).ifPresent(v -> defaultOffHand[0] = v.intValue());
+        });
+        page.addEventListener("nighttime-offhand", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("nighttime-offhand", Double.class).ifPresent(v -> nighttimeOffhand[0] = v.intValue());
+        });
+
+        // Checkbox
+        page.addEventListener("breathes-in-water", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("breathes-in-water", Boolean.class).ifPresent(v -> breathesInWater[0] = v);
+        });
+
+        // Save
+        page.addEventListener("save-btn", CustomUIEventBindingType.Activating, event -> {
+            citizen.setDropList(dropList[0]);
+            citizen.setRunThreshold(runThreshold[0]);
+            citizen.setNameTranslationKey(nameTransKey[0]);
+            citizen.setAttitudeGroup(attitudeGroup[0]);
+            citizen.setBreathesInWater(breathesInWater[0]);
+            citizen.setDayFlavorAnimation(dayFlavorAnim[0]);
+            citizen.setDayFlavorAnimationLengthMin(dayFlavorLenMin[0]);
+            citizen.setDayFlavorAnimationLengthMax(dayFlavorLenMax[0]);
+            citizen.setWakingIdleBehaviorComponent(wakingIdleBehavior[0]);
+            citizen.setDefaultHotbarSlot(defaultHotbar[0]);
+            citizen.setRandomIdleHotbarSlot(randomIdleHotbar[0]);
+            citizen.setChanceToEquipFromIdleHotbarSlot(chanceEquipIdle[0]);
+            citizen.setDefaultOffHandSlot(defaultOffHand[0]);
+            citizen.setNighttimeOffhandSlot(nighttimeOffhand[0]);
+
+            // Parse comma-separated lists
+            citizen.setCombatMessageTargetGroups(parseCommaSeparatedList(combatMsgGroups[0]));
+            citizen.setFlockArray(parseCommaSeparatedList(flockArray[0]));
+            citizen.setDisableDamageGroups(parseCommaSeparatedList(disableDmgGroups[0]));
+
+            plugin.getCitizensManager().saveCitizen(citizen);
+            playerRef.sendMessage(Message.raw("Advanced settings saved!").color(Color.GREEN));
+            openBehaviorsGUI(playerRef, store, citizen);
+        });
+
+        page.addEventListener("cancel-btn", CustomUIEventBindingType.Activating, event -> {
+            openBehaviorsGUI(playerRef, store, citizen);
+        });
+    }
+
+    private List<String> parseCommaSeparatedList(String input) {
+        if (input == null || input.trim().isEmpty()) {
+            return new ArrayList<>();
+        }
+        List<String> result = new ArrayList<>();
+        for (String item : input.split(",")) {
+            String trimmed = item.trim();
+            if (!trimmed.isEmpty()) {
+                result.add(trimmed);
+            }
+        }
+        return result;
     }
 }

@@ -4,11 +4,13 @@ import com.electro.hycitizens.HyCitizensPlugin;
 import com.electro.hycitizens.events.CitizenInteractEvent;
 import com.electro.hycitizens.events.CitizenInteractListener;
 import com.electro.hycitizens.models.*;
+import com.electro.hycitizens.roles.RoleGenerator;
 import com.electro.hycitizens.util.ConfigManager;
 import com.electro.hycitizens.util.SkinUtilities;
 import com.hypixel.hytale.assetstore.AssetLoadResult;
 import com.hypixel.hytale.assetstore.AssetRegistry;
 import com.hypixel.hytale.assetstore.map.DefaultAssetMap;
+import com.hypixel.hytale.assetstore.map.IndexedLookupTableAssetMap;
 import com.hypixel.hytale.common.util.RandomUtil;
 import com.hypixel.hytale.component.*;
 import com.hypixel.hytale.math.util.ChunkUtil;
@@ -37,6 +39,7 @@ import com.hypixel.hytale.server.core.modules.entitystats.EntityStatMap;
 import com.hypixel.hytale.server.core.modules.entitystats.EntityStatValue;
 import com.hypixel.hytale.server.core.modules.entitystats.EntityStatsModule;
 import com.hypixel.hytale.server.core.modules.entitystats.asset.DefaultEntityStatTypes;
+import com.hypixel.hytale.server.core.modules.interaction.interaction.config.RootInteraction;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
@@ -70,11 +73,13 @@ public class CitizensManager {
     private final Map<UUID, List<CitizenData>> citizensByWorld = new HashMap<>();
     private final Set<String> groups = new HashSet<>();
     private final Set<String> registeredNoLoopAnimations = ConcurrentHashMap.newKeySet();
+    private final RoleGenerator roleGenerator;
 
     public CitizensManager(@Nonnull HyCitizensPlugin plugin) {
         this.plugin = plugin;
         this.config = plugin.getConfigManager();
         this.citizens = new ConcurrentHashMap<>();
+        this.roleGenerator = new RoleGenerator(plugin.getGeneratedRolesPath());
 
         loadAllCitizens();
         startSkinUpdateScheduler();
@@ -323,6 +328,9 @@ public class CitizensManager {
 
         // Save groups list in case new groups were discovered from citizens
         saveGroups();
+
+        // Regenerate all role files from saved config
+        roleGenerator.regenerateAllRoles(citizens.values());
     }
 
     @Nullable
@@ -368,9 +376,10 @@ public class CitizensManager {
             String commandPath = basePath + ".commands." + i;
             String command = config.getString(commandPath + ".command");
             boolean runAsServer = config.getBoolean(commandPath + ".run-as-server", false);
+            float delay = config.getFloat(commandPath + ".delay", 0.0f);
 
             if (command != null) {
-                actions.add(new CommandAction(command, runAsServer));
+                actions.add(new CommandAction(command, runAsServer, delay));
             }
         }
 
@@ -465,6 +474,100 @@ public class CitizensManager {
         // Load group (backwards compatible - defaults to empty string)
         citizenData.setGroup(config.getString(basePath + ".group", ""));
 
+        // Load new config fields
+        citizenData.setMaxHealth(config.getFloat(basePath + ".max-health", 100));
+        citizenData.setLeashDistance(config.getFloat(basePath + ".leash-distance", 45));
+        citizenData.setDefaultNpcAttitude(config.getString(basePath + ".default-npc-attitude", "Ignore"));
+        citizenData.setApplySeparation(config.getBoolean(basePath + ".apply-separation", true));
+
+        // Load combat config
+        CombatConfig combatConfig = new CombatConfig();
+        combatConfig.setAttackType(config.getString(basePath + ".combat.attack-type", "Root_NPC_Attack_Melee"));
+        combatConfig.setAttackDistance(config.getFloat(basePath + ".combat.attack-distance", 2.0f));
+        combatConfig.setChaseSpeed(config.getFloat(basePath + ".combat.chase-speed", 0.67f));
+        combatConfig.setCombatBehaviorDistance(config.getFloat(basePath + ".combat.combat-behavior-distance", 5.0f));
+        combatConfig.setCombatStrafeWeight(config.getInt(basePath + ".combat.combat-strafe-weight", 10));
+        combatConfig.setCombatDirectWeight(config.getInt(basePath + ".combat.combat-direct-weight", 10));
+        combatConfig.setBackOffAfterAttack(config.getBoolean(basePath + ".combat.back-off-after-attack", true));
+        combatConfig.setBackOffDistance(config.getFloat(basePath + ".combat.back-off-distance", 4.0f));
+        combatConfig.setDesiredAttackDistanceMin(config.getFloat(basePath + ".combat.desired-attack-dist-min", 1.5f));
+        combatConfig.setDesiredAttackDistanceMax(config.getFloat(basePath + ".combat.desired-attack-dist-max", 1.5f));
+        combatConfig.setAttackPauseMin(config.getFloat(basePath + ".combat.attack-pause-min", 1.5f));
+        combatConfig.setAttackPauseMax(config.getFloat(basePath + ".combat.attack-pause-max", 2.0f));
+        combatConfig.setCombatRelativeTurnSpeed(config.getFloat(basePath + ".combat.combat-relative-turn-speed", 1.5f));
+        combatConfig.setCombatAlwaysMovingWeight(config.getInt(basePath + ".combat.combat-always-moving-weight", 0));
+        combatConfig.setCombatStrafingDurationMin(config.getFloat(basePath + ".combat.strafing-duration-min", 1.0f));
+        combatConfig.setCombatStrafingDurationMax(config.getFloat(basePath + ".combat.strafing-duration-max", 1.0f));
+        combatConfig.setCombatStrafingFrequencyMin(config.getFloat(basePath + ".combat.strafing-frequency-min", 2.0f));
+        combatConfig.setCombatStrafingFrequencyMax(config.getFloat(basePath + ".combat.strafing-frequency-max", 2.0f));
+        combatConfig.setCombatAttackPreDelayMin(config.getFloat(basePath + ".combat.attack-pre-delay-min", 0.2f));
+        combatConfig.setCombatAttackPreDelayMax(config.getFloat(basePath + ".combat.attack-pre-delay-max", 0.2f));
+        combatConfig.setCombatAttackPostDelayMin(config.getFloat(basePath + ".combat.attack-post-delay-min", 0.2f));
+        combatConfig.setCombatAttackPostDelayMax(config.getFloat(basePath + ".combat.attack-post-delay-max", 0.2f));
+        combatConfig.setBackOffDurationMin(config.getFloat(basePath + ".combat.back-off-duration-min", 2.0f));
+        combatConfig.setBackOffDurationMax(config.getFloat(basePath + ".combat.back-off-duration-max", 3.0f));
+        combatConfig.setBlockAbility(config.getString(basePath + ".combat.block-ability", "Shield_Block"));
+        combatConfig.setBlockProbability(config.getInt(basePath + ".combat.block-probability", 50));
+        combatConfig.setCombatFleeIfTooCloseDistance(config.getFloat(basePath + ".combat.flee-if-too-close", 0f));
+        combatConfig.setTargetSwitchTimerMin(config.getFloat(basePath + ".combat.target-switch-min", 5.0f));
+        combatConfig.setTargetSwitchTimerMax(config.getFloat(basePath + ".combat.target-switch-max", 5.0f));
+        combatConfig.setTargetRange(config.getFloat(basePath + ".combat.target-range", 4.0f));
+        combatConfig.setCombatMovingRelativeSpeed(config.getFloat(basePath + ".combat.combat-moving-speed", 0.6f));
+        combatConfig.setCombatBackwardsRelativeSpeed(config.getFloat(basePath + ".combat.combat-backwards-speed", 0.3f));
+        combatConfig.setUseCombatActionEvaluator(config.getBoolean(basePath + ".combat.use-combat-action-evaluator", false));
+        citizenData.setCombatConfig(combatConfig);
+
+        // Load detection config
+        DetectionConfig detectionConfig = new DetectionConfig();
+        detectionConfig.setViewRange(config.getFloat(basePath + ".detection.view-range", 0));
+        detectionConfig.setViewSector(config.getFloat(basePath + ".detection.view-sector", 180));
+        detectionConfig.setHearingRange(config.getFloat(basePath + ".detection.hearing-range", 0));
+        detectionConfig.setAbsoluteDetectionRange(config.getFloat(basePath + ".detection.absolute-detection-range", 0));
+        detectionConfig.setAlertedRange(config.getFloat(basePath + ".detection.alerted-range", 0));
+        detectionConfig.setAlertedTimeMin(config.getFloat(basePath + ".detection.alerted-time-min", 1.0f));
+        detectionConfig.setAlertedTimeMax(config.getFloat(basePath + ".detection.alerted-time-max", 2.0f));
+        detectionConfig.setChanceToBeAlertedWhenReceivingCallForHelp(config.getInt(basePath + ".detection.chance-alerted-call-for-help", 70));
+        detectionConfig.setConfusedTimeMin(config.getFloat(basePath + ".detection.confused-time-min", 1.0f));
+        detectionConfig.setConfusedTimeMax(config.getFloat(basePath + ".detection.confused-time-max", 2.0f));
+        detectionConfig.setSearchTimeMin(config.getFloat(basePath + ".detection.search-time-min", 10.0f));
+        detectionConfig.setSearchTimeMax(config.getFloat(basePath + ".detection.search-time-max", 14.0f));
+        detectionConfig.setInvestigateRange(config.getFloat(basePath + ".detection.investigate-range", 40.0f));
+        citizenData.setDetectionConfig(detectionConfig);
+
+        // Load path config
+        PathConfig pathConfig = new PathConfig();
+        pathConfig.setFollowPath(config.getBoolean(basePath + ".path.follow-path", false));
+        pathConfig.setPathName(config.getString(basePath + ".path.path-name", ""));
+        pathConfig.setPatrol(config.getBoolean(basePath + ".path.patrol", false));
+        pathConfig.setPatrolWanderDistance(config.getFloat(basePath + ".path.patrol-wander-distance", 25));
+        citizenData.setPathConfig(pathConfig);
+
+        // Load extended Template_Citizen parameters
+        citizenData.setDropList(config.getString(basePath + ".drop-list", "Empty"));
+        citizenData.setRunThreshold(config.getFloat(basePath + ".run-threshold", 0.3f));
+        citizenData.setWakingIdleBehaviorComponent(config.getString(basePath + ".waking-idle-behavior", "Component_Instruction_Waking_Idle"));
+        citizenData.setDayFlavorAnimation(config.getString(basePath + ".day-flavor-animation", ""));
+        citizenData.setDayFlavorAnimationLengthMin(config.getFloat(basePath + ".day-flavor-anim-length-min", 3.0f));
+        citizenData.setDayFlavorAnimationLengthMax(config.getFloat(basePath + ".day-flavor-anim-length-max", 5.0f));
+        citizenData.setAttitudeGroup(config.getString(basePath + ".attitude-group", "Empty"));
+        citizenData.setNameTranslationKey(config.getString(basePath + ".name-translation-key", "Citizen"));
+        citizenData.setBreathesInWater(config.getBoolean(basePath + ".breathes-in-water", false));
+        citizenData.setLeashMinPlayerDistance(config.getFloat(basePath + ".leash-min-player-distance", 4.0f));
+        citizenData.setLeashTimerMin(config.getFloat(basePath + ".leash-timer-min", 3.0f));
+        citizenData.setLeashTimerMax(config.getFloat(basePath + ".leash-timer-max", 5.0f));
+        citizenData.setHardLeashDistance(config.getFloat(basePath + ".hard-leash-distance", 200.0f));
+        citizenData.setDefaultHotbarSlot(config.getInt(basePath + ".default-hotbar-slot", 0));
+        citizenData.setRandomIdleHotbarSlot(config.getInt(basePath + ".random-idle-hotbar-slot", -1));
+        citizenData.setChanceToEquipFromIdleHotbarSlot(config.getInt(basePath + ".chance-equip-idle-hotbar", 5));
+        citizenData.setDefaultOffHandSlot(config.getInt(basePath + ".default-offhand-slot", -1));
+        citizenData.setNighttimeOffhandSlot(config.getInt(basePath + ".nighttime-offhand-slot", 0));
+        List<String> combatTargetGroups = config.getStringList(basePath + ".combat-message-target-groups");
+        if (combatTargetGroups != null) citizenData.setCombatMessageTargetGroups(combatTargetGroups);
+        List<String> flockArr = config.getStringList(basePath + ".flock-array");
+        if (flockArr != null) citizenData.setFlockArray(flockArr);
+        List<String> disableDmgGroups = config.getStringList(basePath + ".disable-damage-groups");
+        if (disableDmgGroups != null) citizenData.setDisableDamageGroups(disableDmgGroups);
+
         return citizenData;
     }
 
@@ -512,6 +615,7 @@ public class CitizensManager {
 
                 config.set(commandPath + ".command", action.getCommand());
                 config.set(commandPath + ".run-as-server", action.isRunAsServer());
+                config.set(commandPath + ".delay", action.getDelaySeconds());
             }
 
             // Misc
@@ -563,6 +667,97 @@ public class CitizensManager {
 
             // Save group
             config.set(basePath + ".group", citizen.getGroup());
+
+            // Save new config fields
+            config.set(basePath + ".max-health", citizen.getMaxHealth());
+            config.set(basePath + ".leash-distance", citizen.getLeashDistance());
+            config.set(basePath + ".default-npc-attitude", citizen.getDefaultNpcAttitude());
+            config.set(basePath + ".apply-separation", citizen.isApplySeparation());
+
+            // Save combat config
+            CombatConfig combat = citizen.getCombatConfig();
+            config.set(basePath + ".combat.attack-type", combat.getAttackType());
+            config.set(basePath + ".combat.attack-distance", combat.getAttackDistance());
+            config.set(basePath + ".combat.chase-speed", combat.getChaseSpeed());
+            config.set(basePath + ".combat.combat-behavior-distance", combat.getCombatBehaviorDistance());
+            config.set(basePath + ".combat.combat-strafe-weight", combat.getCombatStrafeWeight());
+            config.set(basePath + ".combat.combat-direct-weight", combat.getCombatDirectWeight());
+            config.set(basePath + ".combat.back-off-after-attack", combat.isBackOffAfterAttack());
+            config.set(basePath + ".combat.back-off-distance", combat.getBackOffDistance());
+            config.set(basePath + ".combat.desired-attack-dist-min", combat.getDesiredAttackDistanceMin());
+            config.set(basePath + ".combat.desired-attack-dist-max", combat.getDesiredAttackDistanceMax());
+            config.set(basePath + ".combat.attack-pause-min", combat.getAttackPauseMin());
+            config.set(basePath + ".combat.attack-pause-max", combat.getAttackPauseMax());
+            config.set(basePath + ".combat.combat-relative-turn-speed", combat.getCombatRelativeTurnSpeed());
+            config.set(basePath + ".combat.combat-always-moving-weight", combat.getCombatAlwaysMovingWeight());
+            config.set(basePath + ".combat.strafing-duration-min", combat.getCombatStrafingDurationMin());
+            config.set(basePath + ".combat.strafing-duration-max", combat.getCombatStrafingDurationMax());
+            config.set(basePath + ".combat.strafing-frequency-min", combat.getCombatStrafingFrequencyMin());
+            config.set(basePath + ".combat.strafing-frequency-max", combat.getCombatStrafingFrequencyMax());
+            config.set(basePath + ".combat.attack-pre-delay-min", combat.getCombatAttackPreDelayMin());
+            config.set(basePath + ".combat.attack-pre-delay-max", combat.getCombatAttackPreDelayMax());
+            config.set(basePath + ".combat.attack-post-delay-min", combat.getCombatAttackPostDelayMin());
+            config.set(basePath + ".combat.attack-post-delay-max", combat.getCombatAttackPostDelayMax());
+            config.set(basePath + ".combat.back-off-duration-min", combat.getBackOffDurationMin());
+            config.set(basePath + ".combat.back-off-duration-max", combat.getBackOffDurationMax());
+            config.set(basePath + ".combat.block-ability", combat.getBlockAbility());
+            config.set(basePath + ".combat.block-probability", combat.getBlockProbability());
+            config.set(basePath + ".combat.flee-if-too-close", combat.getCombatFleeIfTooCloseDistance());
+            config.set(basePath + ".combat.target-switch-min", combat.getTargetSwitchTimerMin());
+            config.set(basePath + ".combat.target-switch-max", combat.getTargetSwitchTimerMax());
+            config.set(basePath + ".combat.target-range", combat.getTargetRange());
+            config.set(basePath + ".combat.combat-moving-speed", combat.getCombatMovingRelativeSpeed());
+            config.set(basePath + ".combat.combat-backwards-speed", combat.getCombatBackwardsRelativeSpeed());
+            config.set(basePath + ".combat.use-combat-action-evaluator", combat.isUseCombatActionEvaluator());
+
+            // Save detection config
+            DetectionConfig detection = citizen.getDetectionConfig();
+            config.set(basePath + ".detection.view-range", detection.getViewRange());
+            config.set(basePath + ".detection.view-sector", detection.getViewSector());
+            config.set(basePath + ".detection.hearing-range", detection.getHearingRange());
+            config.set(basePath + ".detection.absolute-detection-range", detection.getAbsoluteDetectionRange());
+            config.set(basePath + ".detection.alerted-range", detection.getAlertedRange());
+            config.set(basePath + ".detection.alerted-time-min", detection.getAlertedTimeMin());
+            config.set(basePath + ".detection.alerted-time-max", detection.getAlertedTimeMax());
+            config.set(basePath + ".detection.chance-alerted-call-for-help", detection.getChanceToBeAlertedWhenReceivingCallForHelp());
+            config.set(basePath + ".detection.confused-time-min", detection.getConfusedTimeMin());
+            config.set(basePath + ".detection.confused-time-max", detection.getConfusedTimeMax());
+            config.set(basePath + ".detection.search-time-min", detection.getSearchTimeMin());
+            config.set(basePath + ".detection.search-time-max", detection.getSearchTimeMax());
+            config.set(basePath + ".detection.investigate-range", detection.getInvestigateRange());
+
+            // Save path config
+            PathConfig pathCfg = citizen.getPathConfig();
+            config.set(basePath + ".path.follow-path", pathCfg.isFollowPath());
+            config.set(basePath + ".path.path-name", pathCfg.getPathName());
+            config.set(basePath + ".path.patrol", pathCfg.isPatrol());
+            config.set(basePath + ".path.patrol-wander-distance", pathCfg.getPatrolWanderDistance());
+
+            // Save extended Template_Citizen parameters
+            config.set(basePath + ".drop-list", citizen.getDropList());
+            config.set(basePath + ".run-threshold", citizen.getRunThreshold());
+            config.set(basePath + ".waking-idle-behavior", citizen.getWakingIdleBehaviorComponent());
+            config.set(basePath + ".day-flavor-animation", citizen.getDayFlavorAnimation());
+            config.set(basePath + ".day-flavor-anim-length-min", citizen.getDayFlavorAnimationLengthMin());
+            config.set(basePath + ".day-flavor-anim-length-max", citizen.getDayFlavorAnimationLengthMax());
+            config.set(basePath + ".attitude-group", citizen.getAttitudeGroup());
+            config.set(basePath + ".name-translation-key", citizen.getNameTranslationKey());
+            config.set(basePath + ".breathes-in-water", citizen.isBreathesInWater());
+            config.set(basePath + ".leash-min-player-distance", citizen.getLeashMinPlayerDistance());
+            config.set(basePath + ".leash-timer-min", citizen.getLeashTimerMin());
+            config.set(basePath + ".leash-timer-max", citizen.getLeashTimerMax());
+            config.set(basePath + ".hard-leash-distance", citizen.getHardLeashDistance());
+            config.set(basePath + ".default-hotbar-slot", citizen.getDefaultHotbarSlot());
+            config.set(basePath + ".random-idle-hotbar-slot", citizen.getRandomIdleHotbarSlot());
+            config.set(basePath + ".chance-equip-idle-hotbar", citizen.getChanceToEquipFromIdleHotbarSlot());
+            config.set(basePath + ".default-offhand-slot", citizen.getDefaultOffHandSlot());
+            config.set(basePath + ".nighttime-offhand-slot", citizen.getNighttimeOffhandSlot());
+            config.setStringList(basePath + ".combat-message-target-groups", citizen.getCombatMessageTargetGroups());
+            config.setStringList(basePath + ".flock-array", citizen.getFlockArray());
+            config.setStringList(basePath + ".disable-damage-groups", citizen.getDisableDamageGroups());
+
+            // Auto-regenerate role file on save (roles hot-reload)
+            roleGenerator.generateRole(citizen);
 
             // Add group to groups set if not empty
             if (!citizen.getGroup().isEmpty()) {
@@ -702,6 +897,8 @@ public class CitizensManager {
 
         config.set("citizens." + citizenId, null);
 
+        roleGenerator.deleteRoleFile(citizenId);
+
         despawnCitizen(citizen);
     }
     public void spawnCitizen(CitizenData citizen, boolean save) {
@@ -793,7 +990,7 @@ public class CitizensManager {
             return;
         }
 
-        String roleName = getRoleName(citizen);
+        String roleName = resolveRoleName(citizen);
 
         Pair<Ref<EntityStore>, NPCEntity> npc = NPCPlugin.get().spawnEntity(
                 world.getEntityStore().getStore(),
@@ -873,7 +1070,7 @@ public class CitizensManager {
             getLogger().atInfo().log("Failed to spawn player model for citizen NPC: " + citizen.getName() + ". The world chunk is unloaded.");
         }
 
-        String roleName = getRoleName(citizen);
+        String roleName = resolveRoleName(citizen);
 
         Pair<Ref<EntityStore>, NPCEntity> npc = NPCPlugin.get().spawnEntity(
                 world.getEntityStore().getStore(),
@@ -1702,42 +1899,119 @@ public class CitizensManager {
     }
 
     @Nonnull
-    private String getRoleName(@Nonnull CitizenData citizen) {
-        String moveType = citizen.getMovementBehavior().getType();
-        boolean interactable = citizen.getFKeyInteractionEnabled();
-        String attitude = citizen.getAttitude();
-        boolean isWander = "WANDER".equals(moveType) || "WANDER_CIRCLE".equals(moveType) || "WANDER_RECT".equals(moveType);
+    private String resolveRoleName(@Nonnull CitizenData citizen) {
+        // Generate/update the role file on disk (roles hot-reload via asset pack)
+        String generatedRoleName = roleGenerator.generateRole(citizen);
 
-        if (isWander) {
-            int radius = getEffectiveRadius(citizen);
-            getLogger().atInfo().log("wander radius " + radius);
-
-            String base = switch (attitude) {
-                case "NEUTRAL" -> "Citizen_Wander_Neutral_R" + radius;
-                case "AGGRESSIVE" -> "Citizen_Wander_Aggressive_R" + radius;
-                default -> "Citizen_Wander_Passive_R" + radius;
-            };
-            return interactable ? base + "_Interactable_Role" : base + "_Role";
-        } else {
-            // IDLE movement
-//            return switch (attitude) {
-//                case "NEUTRAL" -> interactable ? "Citizen_Idle_Neutral_Interactable_Role" : "Citizen_Idle_Neutral_Role";
-//                case "AGGRESSIVE" -> interactable ? "Citizen_Idle_Aggressive_Interactable_Role" : "Citizen_Idle_Aggressive_Role";
-//                default -> interactable ? "Citizen_Interactable_Role" : "Citizen_Role";
-//            };
-            return interactable ? "Citizen_Interactable_Role" : "Citizen_Role";
+        // With hot-reload, generated roles are indexed automatically
+        int roleIndex = NPCPlugin.get().getIndex(generatedRoleName);
+        if (roleIndex != Integer.MIN_VALUE) {
+            return generatedRoleName;
         }
+
+        // Fall back to static role if not yet registered
+        String fallbackName = roleGenerator.getFallbackRoleName(citizen);
+        getLogger().atInfo().log("Generated role '" + generatedRoleName + "' not yet registered, using fallback '" + fallbackName + "'. Will retry applying generated role in 5 seconds.");
+
+        // Schedule a delayed retry to apply the generated role once it's been indexed
+        scheduleRoleRetry(citizen, generatedRoleName);
+
+        return fallbackName;
     }
 
-    private int getEffectiveRadius(@Nonnull CitizenData citizen) {
-        float radius = citizen.getMovementBehavior().getWanderRadius();
-        // Snap to nearest supported radius: 0, 1, 2, 5, 10, 15
-        if (radius < 1) return 0;
-        if (radius < 2) return 1;
-        if (radius < 3) return 2;
-        if (radius <= 7) return 5;
-        if (radius <= 12) return 10;
-        return 15;
+    private void scheduleRoleRetry(@Nonnull CitizenData citizen, @Nonnull String generatedRoleName) {
+        HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
+            try {
+                int roleIndex = NPCPlugin.get().getIndex(generatedRoleName);
+                if (roleIndex == Integer.MIN_VALUE) {
+                    getLogger().atWarning().log("Generated role '" + generatedRoleName + "' still not registered after retry. Role may have failed to generate.");
+                    return;
+                }
+
+                if (citizen.getNpcRef() == null || !citizen.getNpcRef().isValid()) {
+                    getLogger().atWarning().log("Cannot apply role '" + generatedRoleName + "': NPC ref is no longer valid.");
+                    return;
+                }
+
+                World world = Universe.get().getWorld(citizen.getWorldUUID());
+                if (world == null) return;
+
+                world.execute(() -> {
+                    try {
+                        NPCEntity npcEntity = citizen.getNpcRef().getStore().getComponent(
+                                citizen.getNpcRef(), NPCEntity.getComponentType());
+                        if (npcEntity != null) {
+                            int newRoleIndex = NPCPlugin.get().getIndex(generatedRoleName);
+                            npcEntity.setRoleIndex(newRoleIndex);
+                            npcEntity.setRoleName(generatedRoleName);
+
+                            //npcEntity.setRole(role);
+                            getLogger().atInfo().log("Successfully applied generated role '" + generatedRoleName + "' to citizen '" + citizen.getName() + "'.");
+                        }
+                    } catch (Exception e) {
+                        getLogger().atWarning().log("Failed to apply role '" + generatedRoleName + "' to citizen '" + citizen.getName() + "': " + e.getMessage());
+                    }
+                });
+            } catch (Exception e) {
+                getLogger().atWarning().log("Error during role retry for '" + generatedRoleName + "': " + e.getMessage());
+            }
+        }, 5, TimeUnit.SECONDS);
+    }
+
+    public RoleGenerator getRoleGenerator() {
+        return roleGenerator;
+    }
+
+    public void autoResolveAttackType(@Nonnull CitizenData citizen) {
+        String resolved = RoleGenerator.resolveAttackInteraction(citizen.getModelId());
+        citizen.getCombatConfig().setAttackType(resolved);
+    }
+
+    public void forceAttackEntity(@Nonnull CitizenData citizen, @Nonnull String attackInteractionId) {
+        if (citizen.getNpcRef() == null || !citizen.getNpcRef().isValid()) return;
+
+        World world = Universe.get().getWorld(citizen.getWorldUUID());
+        if (world == null) return;
+
+        world.execute(() -> {
+            try {
+                NPCEntity npcEntity = citizen.getNpcRef().getStore().getComponent(
+                        citizen.getNpcRef(), NPCEntity.getComponentType());
+                if (npcEntity == null || npcEntity.getRole() == null) return;
+
+                var combatSupport = npcEntity.getRole().getCombatSupport();
+                if (combatSupport == null) return;
+
+                combatSupport.clearAttackOverrides();
+                combatSupport.addAttackOverride(attackInteractionId);
+            } catch (Exception e) {
+                getLogger().atWarning().log("Failed to force attack for citizen " + citizen.getId() + ": " + e.getMessage());
+            }
+        });
+    }
+
+    public void setCitizenCombatConfig(@Nonnull String citizenId, @Nonnull CombatConfig combatConfig) {
+        CitizenData citizen = citizens.get(citizenId);
+        if (citizen == null) return;
+        citizen.setCombatConfig(combatConfig);
+        saveCitizen(citizen);
+        updateSpawnedCitizenNPC(citizen, true);
+    }
+
+    public void setCitizenDetectionConfig(@Nonnull String citizenId, @Nonnull DetectionConfig detectionConfig) {
+        CitizenData citizen = citizens.get(citizenId);
+        if (citizen == null) return;
+        citizen.setDetectionConfig(detectionConfig);
+        saveCitizen(citizen);
+        updateSpawnedCitizenNPC(citizen, true);
+    }
+
+    public void setCitizenPathConfig(@Nonnull String citizenId, @Nonnull PathConfig pathConfig) {
+        CitizenData citizen = citizens.get(citizenId);
+        if (citizen == null) return;
+        citizen.setPathConfig(pathConfig);
+        saveCitizen(citizen);
+        updateSpawnedCitizenNPC(citizen, true);
     }
 
     public void addCitizenInteractListener(CitizenInteractListener listener) {

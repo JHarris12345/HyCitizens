@@ -13,6 +13,7 @@ import javax.annotation.Nullable;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 import static com.hypixel.hytale.logger.HytaleLogger.getLogger;
 
@@ -22,6 +23,7 @@ public class ConfigManager {
     private Map<String, Object> config;
     private boolean deferSave = false;
     private boolean dirty = false;
+    private final Object saveLock = new Object();
 
     public ConfigManager(@Nonnull Path pluginDataFolder) {
         this.configFile = pluginDataFolder.resolve("data.json");
@@ -85,10 +87,8 @@ public class ConfigManager {
             Object value = entry.getValue();
 
             if (key.contains(".")) {
-                // Old flat key - nest it
                 setNestedValue(newConfig, key, value);
             } else {
-                // Already a top-level key (could be from new format mixed in)
                 newConfig.put(key, value);
             }
         }
@@ -120,9 +120,6 @@ public class ConfigManager {
         }
     }
 
-    /**
-     * Retrieves a value from the nested map structure using a dot-notation path.
-     */
     @SuppressWarnings("unchecked")
     @Nullable
     private Object getNestedValue(@Nonnull String path) {
@@ -140,9 +137,6 @@ public class ConfigManager {
         return current;
     }
 
-    /**
-     * Removes a nested value and cleans up empty parent maps.
-     */
     @SuppressWarnings("unchecked")
     private void removeNestedValue(@Nonnull String path) {
         String[] parts = path.split("\\.");
@@ -182,23 +176,28 @@ public class ConfigManager {
     }
 
     public void saveConfig() {
-        try {
-            Files.createDirectories(configFile.getParent());
+        synchronized (saveLock) {
+            try {
+                Files.createDirectories(configFile.getParent());
 
-            Path tempFile = configFile.getParent().resolve("data.json.tmp");
-            try (Writer writer = new FileWriter(tempFile.toFile())) {
-                gson.toJson(config, writer);
+                Path tempFile = configFile.getParent().resolve("data.json.tmp");
+                try (Writer writer = Files.newBufferedWriter(tempFile)) {
+                    gson.toJson(config, writer);
+                }
+
+                Files.move(
+                        tempFile,
+                        configFile,
+                        StandardCopyOption.REPLACE_EXISTING,
+                        StandardCopyOption.ATOMIC_MOVE
+                );
+
+            } catch (IOException e) {
+                System.err.println("Failed to save config: " + e.getMessage());
             }
-
-            Files.move(tempFile, configFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-        } catch (IOException e) {
-            System.err.println("Failed to save config: " + e.getMessage());
         }
     }
 
-    /**
-     * Saves to disk unless we're in a batch operation, in which case just marks dirty.
-     */
     private void conditionalSave() {
         if (deferSave) {
             dirty = true;
@@ -423,11 +422,6 @@ public class ConfigManager {
         return new LinkedHashMap<>(config);
     }
 
-    /**
-     * Returns the keys of the nested map at the given path.
-     * Useful for iterating over citizens, etc.
-     * e.g. getKeys("citizens") returns all citizen IDs.
-     */
     @SuppressWarnings("unchecked")
     @Nonnull
     public Set<String> getKeys(@Nonnull String path) {

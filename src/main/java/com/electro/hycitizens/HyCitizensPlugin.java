@@ -7,8 +7,10 @@ import com.electro.hycitizens.managers.CitizensManager;
 import com.electro.hycitizens.models.CitizenData;
 import com.electro.hycitizens.ui.CitizensUI;
 import com.electro.hycitizens.util.ConfigManager;
+import com.electro.hycitizens.util.RoleAssetPackManager;
 import com.electro.hycitizens.util.UpdateChecker;
 import com.hypixel.hytale.event.EventPriority;
+import com.hypixel.hytale.server.core.HytaleServer;
 import com.hypixel.hytale.server.core.event.events.ShutdownEvent;
 import com.hypixel.hytale.server.core.event.events.player.*;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
@@ -21,6 +23,7 @@ import com.hypixel.hytale.server.core.universe.world.storage.ChunkStore;
 import com.hypixel.hytale.server.npc.NPCPlugin;
 
 import javax.annotation.Nonnull;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,6 +33,7 @@ public class HyCitizensPlugin extends JavaPlugin {
     private ConfigManager configManager;
     private CitizensManager citizensManager;
     private CitizensUI citizensUI;
+    private Path generatedRolesPath;
 
     // Listeners
     private PlayerAddToWorldListener addToWorldListener;
@@ -45,6 +49,11 @@ public class HyCitizensPlugin extends JavaPlugin {
     protected void setup() {
         // Initialize config manager
         this.configManager = new ConfigManager(Paths.get("mods", "HyCitizensData"));
+
+        this.generatedRolesPath = Paths.get("mods", "HyCitizensRoles", "Server", "NPC", "Roles");
+
+        RoleAssetPackManager.setup();
+
         this.citizensManager = new CitizensManager(this);
         this.citizensUI = new CitizensUI(this);
 
@@ -97,5 +106,10 @@ public class HyCitizensPlugin extends JavaPlugin {
 
     public CitizensUI getCitizensUI() {
         return citizensUI;
+    }
+
+    @Nonnull
+    public Path getGeneratedRolesPath() {
+        return generatedRolesPath;
     }
 }

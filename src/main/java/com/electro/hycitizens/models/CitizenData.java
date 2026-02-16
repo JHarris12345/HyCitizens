@@ -1,5 +1,6 @@
 package com.electro.hycitizens.models;
 
+import com.electro.hycitizens.roles.RoleGenerator;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.math.vector.Vector3d;
 import com.hypixel.hytale.math.vector.Vector3f;
@@ -75,6 +76,44 @@ public class CitizenData {
 
     // Group field
     private String group = "";
+
+    // New config fields for runtime role generation
+    private CombatConfig combatConfig = new CombatConfig();
+    private DetectionConfig detectionConfig = new DetectionConfig();
+    private PathConfig pathConfig = new PathConfig();
+    private float maxHealth = 100;
+    private float leashDistance = 45;
+    private String defaultNpcAttitude = "Ignore";
+    private boolean applySeparation = true;
+
+    // Extended Template_Citizen parameters
+    private String dropList = "Empty";
+    private float runThreshold = 0.3f;
+    private String wakingIdleBehaviorComponent = "Component_Instruction_Waking_Idle";
+    private String dayFlavorAnimation = "";
+    private float dayFlavorAnimationLengthMin = 3.0f;
+    private float dayFlavorAnimationLengthMax = 5.0f;
+    private String attitudeGroup = "Empty";
+    private String nameTranslationKey = "Citizen";
+    private boolean breathesInWater = false;
+
+    // Leash extended parameters
+    private float leashMinPlayerDistance = 4.0f;
+    private float leashTimerMin = 3.0f;
+    private float leashTimerMax = 5.0f;
+    private float hardLeashDistance = 200.0f;
+
+    // Hotbar/OffHand slot management
+    private int defaultHotbarSlot = 0;
+    private int randomIdleHotbarSlot = -1;
+    private int chanceToEquipFromIdleHotbarSlot = 5;
+    private int defaultOffHandSlot = -1;
+    private int nighttimeOffhandSlot = 0;
+
+    // Group arrays for combat/flocking
+    private List<String> combatMessageTargetGroups = new ArrayList<>();
+    private List<String> flockArray = new ArrayList<>();
+    private List<String> disableDamageGroups = new ArrayList<>(List.of("Self"));
 
     public CitizenData(@Nonnull String id, @Nonnull String name, @Nonnull String modelId, @Nonnull UUID worldUUID,
                        @Nonnull Vector3d position, @Nonnull Vector3f rotation, float scale, @Nullable UUID npcUUID,
@@ -475,4 +514,137 @@ public class CitizenData {
     public void setGroup(@Nullable String group) {
         this.group = group != null ? group : "";
     }
+
+    @Nonnull
+    public CombatConfig getCombatConfig() {
+        return combatConfig;
+    }
+
+    public void setCombatConfig(@Nonnull CombatConfig combatConfig) {
+        this.combatConfig = combatConfig;
+    }
+
+    @Nonnull
+    public DetectionConfig getDetectionConfig() {
+        return detectionConfig;
+    }
+
+    public void setDetectionConfig(@Nonnull DetectionConfig detectionConfig) {
+        this.detectionConfig = detectionConfig;
+    }
+
+    @Nonnull
+    public PathConfig getPathConfig() {
+        return pathConfig;
+    }
+
+    public void setPathConfig(@Nonnull PathConfig pathConfig) {
+        this.pathConfig = pathConfig;
+    }
+
+    public float getMaxHealth() {
+        return maxHealth;
+    }
+
+    public void setMaxHealth(float maxHealth) {
+        this.maxHealth = maxHealth;
+    }
+
+    public float getLeashDistance() {
+        return leashDistance;
+    }
+
+    public void setLeashDistance(float leashDistance) {
+        this.leashDistance = leashDistance;
+    }
+
+    @Nonnull
+    public String getDefaultNpcAttitude() {
+        return defaultNpcAttitude;
+    }
+
+    public void setDefaultNpcAttitude(@Nonnull String defaultNpcAttitude) {
+        this.defaultNpcAttitude = defaultNpcAttitude;
+    }
+
+    public boolean isApplySeparation() {
+        return applySeparation;
+    }
+
+    public void setApplySeparation(boolean applySeparation) {
+        this.applySeparation = applySeparation;
+    }
+
+    // Extended Template_Citizen parameter getters/setters
+
+    @Nonnull
+    public String getDropList() { return dropList; }
+    public void setDropList(@Nonnull String dropList) { this.dropList = dropList; }
+
+    public float getRunThreshold() { return runThreshold; }
+    public void setRunThreshold(float runThreshold) { this.runThreshold = runThreshold; }
+
+    @Nonnull
+    public String getWakingIdleBehaviorComponent() { return wakingIdleBehaviorComponent; }
+    public void setWakingIdleBehaviorComponent(@Nonnull String v) { this.wakingIdleBehaviorComponent = v; }
+
+    @Nonnull
+    public String getDayFlavorAnimation() { return dayFlavorAnimation; }
+    public void setDayFlavorAnimation(@Nonnull String v) { this.dayFlavorAnimation = v; }
+
+    public float getDayFlavorAnimationLengthMin() { return dayFlavorAnimationLengthMin; }
+    public void setDayFlavorAnimationLengthMin(float v) { this.dayFlavorAnimationLengthMin = v; }
+
+    public float getDayFlavorAnimationLengthMax() { return dayFlavorAnimationLengthMax; }
+    public void setDayFlavorAnimationLengthMax(float v) { this.dayFlavorAnimationLengthMax = v; }
+
+    @Nonnull
+    public String getAttitudeGroup() { return attitudeGroup; }
+    public void setAttitudeGroup(@Nonnull String v) { this.attitudeGroup = v; }
+
+    @Nonnull
+    public String getNameTranslationKey() { return nameTranslationKey; }
+    public void setNameTranslationKey(@Nonnull String v) { this.nameTranslationKey = v; }
+
+    public boolean isBreathesInWater() { return breathesInWater; }
+    public void setBreathesInWater(boolean v) { this.breathesInWater = v; }
+
+    public float getLeashMinPlayerDistance() { return leashMinPlayerDistance; }
+    public void setLeashMinPlayerDistance(float v) { this.leashMinPlayerDistance = v; }
+
+    public float getLeashTimerMin() { return leashTimerMin; }
+    public void setLeashTimerMin(float v) { this.leashTimerMin = v; }
+
+    public float getLeashTimerMax() { return leashTimerMax; }
+    public void setLeashTimerMax(float v) { this.leashTimerMax = v; }
+
+    public float getHardLeashDistance() { return hardLeashDistance; }
+    public void setHardLeashDistance(float v) { this.hardLeashDistance = v; }
+
+    public int getDefaultHotbarSlot() { return defaultHotbarSlot; }
+    public void setDefaultHotbarSlot(int v) { this.defaultHotbarSlot = v; }
+
+    public int getRandomIdleHotbarSlot() { return randomIdleHotbarSlot; }
+    public void setRandomIdleHotbarSlot(int v) { this.randomIdleHotbarSlot = v; }
+
+    public int getChanceToEquipFromIdleHotbarSlot() { return chanceToEquipFromIdleHotbarSlot; }
+    public void setChanceToEquipFromIdleHotbarSlot(int v) { this.chanceToEquipFromIdleHotbarSlot = v; }
+
+    public int getDefaultOffHandSlot() { return defaultOffHandSlot; }
+    public void setDefaultOffHandSlot(int v) { this.defaultOffHandSlot = v; }
+
+    public int getNighttimeOffhandSlot() { return nighttimeOffhandSlot; }
+    public void setNighttimeOffhandSlot(int v) { this.nighttimeOffhandSlot = v; }
+
+    @Nonnull
+    public List<String> getCombatMessageTargetGroups() { return combatMessageTargetGroups; }
+    public void setCombatMessageTargetGroups(@Nonnull List<String> v) { this.combatMessageTargetGroups = new ArrayList<>(v); }
+
+    @Nonnull
+    public List<String> getFlockArray() { return flockArray; }
+    public void setFlockArray(@Nonnull List<String> v) { this.flockArray = new ArrayList<>(v); }
+
+    @Nonnull
+    public List<String> getDisableDamageGroups() { return disableDamageGroups; }
+    public void setDisableDamageGroups(@Nonnull List<String> v) { this.disableDamageGroups = new ArrayList<>(v); }
 }

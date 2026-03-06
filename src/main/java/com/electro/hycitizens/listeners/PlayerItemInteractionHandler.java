@@ -48,16 +48,10 @@ public class PlayerItemInteractionHandler implements PacketWatcher {
         PacketAdapters.registerInbound(this);
 
         Interaction.CODEC.register("PatrolStick", NullInteraction.class, NullInteraction.CODEC);
+        Interaction.CODEC.register("CitizenStick", NullInteraction.class, NullInteraction.CODEC);
     }
 
     public void unregister() {
-        try {
-            PacketAdapters.class.getMethod("unregisterInbound", PacketWatcher.class).invoke(null, this);
-        } catch (NoSuchMethodException ignored) {
-            // Older API versions may not expose explicit unregistration.
-        } catch (Exception e) {
-            getLogger().atWarning().log("Failed to unregister item interaction packet watcher", e);
-        }
     }
 
     @Override
@@ -115,9 +109,18 @@ public class PlayerItemInteractionHandler implements PacketWatcher {
             }
 
             Store<EntityStore> store = ref.getStore();
+            Player player = store.getComponent(ref, Player.getComponentType());
+            if (player == null) {
+                return;
+            }
 
             switch (itemId) {
                 case "PatrolStick" -> {
+                    if (!player.hasPermission("hycitizens.admin")) {
+                        playerRef.sendMessage(Message.raw("You need hycitizens.admin to use the Patrol Stick.").color(Color.RED));
+                        return;
+                    }
+
                     String pathName = heldItem.getFromMetadataOrNull(
                             "HyCitizensPatrolStick",
                             Codec.STRING
@@ -159,6 +162,16 @@ public class PlayerItemInteractionHandler implements PacketWatcher {
                                 path.getName(), new PatrolWaypoint(pos.x, pos.y, pos.z, 0f));
 
                         playerRef.sendMessage(Message.raw("Waypoint added at your position").color(Color.GREEN));
+                    }
+                }
+                case "CitizenStick" -> {
+                    if (!player.hasPermission("hycitizens.admin")) {
+                        playerRef.sendMessage(Message.raw("You need hycitizens.admin to use the Citizen Stick.").color(Color.RED));
+                        return;
+                    }
+
+                    if (type == InteractionType.Secondary) {
+                        playerRef.sendMessage(Message.raw("Hit a citizen with this stick to open its editor.").color(Color.YELLOW));
                     }
                 }
             }

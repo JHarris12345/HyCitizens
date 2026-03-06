@@ -7,6 +7,7 @@ import com.electro.hycitizens.models.CitizenMessage;
 import com.electro.hycitizens.models.CommandAction;
 import com.electro.hycitizens.models.MessagesConfig;
 import com.hypixel.hytale.component.Ref;
+import com.hypixel.hytale.math.vector.Vector3d;
 import com.hypixel.hytale.server.core.HytaleServer;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.CommandManager;
@@ -20,6 +21,7 @@ import javax.annotation.Nullable;
 import java.awt.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
@@ -85,8 +87,12 @@ public class CitizenInteraction {
     );
 
     private static final Pattern COLOR_PATTERN = Pattern.compile("(\\{[A-Za-z]+})|(\\{#[0-9A-Fa-f]{6}})|([^\\{]+)");
+    private static final Pattern LINK_PATTERN = Pattern.compile("\\[([^\\]]+)]\\((https?://[^)\\s]+)\\)");
     private static final Pattern PLAYER_NAME_PATTERN = Pattern.compile("\\{PlayerName}", Pattern.CASE_INSENSITIVE);
     private static final Pattern CITIZEN_NAME_PATTERN = Pattern.compile("\\{CitizenName}", Pattern.CASE_INSENSITIVE);
+    private static final Pattern NPC_X_PATTERN = Pattern.compile("\\{NpcX}", Pattern.CASE_INSENSITIVE);
+    private static final Pattern NPC_Y_PATTERN = Pattern.compile("\\{NpcY}", Pattern.CASE_INSENSITIVE);
+    private static final Pattern NPC_Z_PATTERN = Pattern.compile("\\{NpcZ}", Pattern.CASE_INSENSITIVE);
     private static final Random RANDOM = new Random();
 
     @Nullable
@@ -121,21 +127,125 @@ public class CitizenInteraction {
 
             // Text chunk
             if (textPart != null && !textPart.isEmpty()) {
-                Message part = Message.raw(textPart);
-
-                if (currentColor != null) {
-                    part = part.color(currentColor);
-                }
-
-                if (msg == null) {
-                    msg = part;
-                } else {
-                    msg = msg.insert(part);
-                }
+                Message part = parseRichStyledText(textPart, currentColor);
+                msg = appendMessage(msg, part);
             }
         }
 
         return msg;
+    }
+
+    @Nullable
+    private static Message parseRichStyledText(@Nonnull String text, @Nullable Color color) {
+        Message result = null;
+        Matcher linkMatcher = LINK_PATTERN.matcher(text);
+        int cursor = 0;
+
+        while (linkMatcher.find()) {
+            if (linkMatcher.start() > cursor) {
+                Message plain = parseInlineStyles(text.substring(cursor, linkMatcher.start()), color, null);
+                result = appendMessage(result, plain);
+            }
+
+            String label = linkMatcher.group(1);
+            String url = linkMatcher.group(2);
+            Message linked = parseInlineStyles(label, color, url);
+            result = appendMessage(result, linked);
+            cursor = linkMatcher.end();
+        }
+
+        if (cursor < text.length()) {
+            Message plain = parseInlineStyles(text.substring(cursor), color, null);
+            result = appendMessage(result, plain);
+        }
+
+        return result;
+    }
+
+    @Nullable
+    private static Message parseInlineStyles(@Nonnull String text, @Nullable Color color, @Nullable String linkUrl) {
+        Message result = null;
+        int i = 0;
+
+        while (i < text.length()) {
+            boolean bold = false;
+            boolean italic = false;
+            String token;
+
+            if (text.startsWith("**", i)) {
+                int end = text.indexOf("**", i + 2);
+                if (end != -1) {
+                    token = text.substring(i + 2, end);
+                    bold = true;
+                    i = end + 2;
+                } else {
+                    token = text.substring(i);
+                    i = text.length();
+                }
+            } else if (text.startsWith("*", i)) {
+                int end = text.indexOf("*", i + 1);
+                if (end != -1) {
+                    token = text.substring(i + 1, end);
+                    italic = true;
+                    i = end + 1;
+                } else {
+                    token = text.substring(i);
+                    i = text.length();
+                }
+            } else {
+                int nextBold = text.indexOf("**", i);
+                int nextItalic = text.indexOf("*", i);
+                int next = -1;
+                if (nextBold != -1 && nextItalic != -1) {
+                    next = Math.min(nextBold, nextItalic);
+                } else if (nextBold != -1) {
+                    next = nextBold;
+                } else if (nextItalic != -1) {
+                    next = nextItalic;
+                }
+
+                if (next == -1) {
+                    token = text.substring(i);
+                    i = text.length();
+                } else {
+                    token = text.substring(i, next);
+                    i = next;
+                }
+            }
+
+            if (token.isEmpty()) {
+                continue;
+            }
+
+            Message part = Message.raw(token);
+            if (color != null) {
+                part = part.color(color);
+            }
+            if (bold) {
+                part = part.bold(true);
+            }
+            if (italic) {
+                part = part.italic(true);
+            }
+            if (linkUrl != null && !linkUrl.isEmpty()) {
+                part = part.link(linkUrl);
+            }
+
+            result = appendMessage(result, part);
+        }
+
+        return result;
+    }
+
+    @Nullable
+    private static Message appendMessage(@Nullable Message base, @Nullable Message part) {
+        if (part == null) {
+            return base;
+        }
+        if (base == null) {
+            return part;
+        }
+        return base.insert(part);
     }
 
     static public void handleInteraction(@Nonnull CitizenData citizen, @Nonnull PlayerRef playerRef) {
@@ -149,21 +259,6 @@ public class CitizenInteraction {
 
         if (interactEvent.isCancelled())
             return;
-
-        MessagesConfig msgConfig = citizen.getMessagesConfig();
-        List<CitizenMessage> allMessages = msgConfig.isEnabled() ? msgConfig.getMessages() : List.of();
-        List<CitizenMessage> matchingMessages = allMessages.stream()
-                .filter(m -> m.isTriggeredBy(interactionSource))
-                .collect(Collectors.toList());
-
-        List<CommandAction> matchingCommands = citizen.getCommandActions().stream()
-                .filter(cmd -> cmd.isTriggeredBy(interactionSource))
-                .collect(Collectors.toList());
-
-        // Nothing to do for this interaction type, exit silently.
-        if (matchingMessages.isEmpty() && matchingCommands.isEmpty()) {
-            return;
-        }
 
         Ref<EntityStore> ref = playerRef.getReference();
 
@@ -189,79 +284,142 @@ public class CitizenInteraction {
 
         // Trigger ON_INTERACT animations
         HyCitizensPlugin.get().getCitizensManager().triggerAnimations(citizen, "ON_INTERACT");
+        UUID playerUUID = playerRef.getUuid();
+        boolean runNormalBehavior = true;
 
-        // Handle messages
-        if (!matchingMessages.isEmpty()) {
-            String mode = msgConfig.getSelectionMode();
-            switch (mode) {
-                case "SEQUENTIAL" -> sendSequentialMessage(citizen, playerRef, matchingMessages);
-                case "ALL" -> sendAllMessages(playerRef, citizen, matchingMessages);
-                default -> sendRandomMessage(playerRef, citizen, matchingMessages); // RANDOM
+        if (citizen.isFirstInteractionEnabled()) {
+            boolean isFirstInteraction = citizen.getPlayersWhoCompletedFirstInteraction().add(playerUUID);
+            if (isFirstInteraction) {
+                runNormalBehavior = citizen.isRunNormalOnFirstInteraction();
+                HyCitizensPlugin.get().getCitizensManager().saveCitizen(citizen);
+                runMessageFlow(
+                        playerRef,
+                        citizen,
+                        interactionSource,
+                        citizen.getFirstInteractionMessagesConfig(),
+                        citizen.getSequentialFirstInteractionMessageIndex()
+                );
+                runCommandFlow(
+                        playerRef,
+                        citizen,
+                        player,
+                        interactionSource,
+                        citizen.getFirstInteractionCommandActions(),
+                        citizen.getFirstInteractionCommandSelectionMode(),
+                        citizen.getSequentialFirstInteractionCommandIndex()
+                );
             }
         }
 
-        // Run matching commands (with per-command delays chained sequentially)
-        CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
-
-        for (CommandAction commandAction : matchingCommands) {
-            chain = chain.thenCompose(v -> {
-                if (commandAction.getDelaySeconds() > 0) {
-                    CompletableFuture<Void> delayedFuture = new CompletableFuture<>();
-                    HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
-                        delayedFuture.complete(null);
-                    }, (long) (commandAction.getDelaySeconds() * 1000), TimeUnit.MILLISECONDS);
-                    return delayedFuture;
-                }
-                return CompletableFuture.completedFuture(null);
-            }).thenCompose(v -> {
-                String command = commandAction.getCommand();
-
-                command = PLAYER_NAME_PATTERN
-                        .matcher(command)
-                        .replaceAll(Matcher.quoteReplacement(playerRef.getUsername()));
-
-                command = CITIZEN_NAME_PATTERN
-                        .matcher(command)
-                        .replaceAll(Matcher.quoteReplacement(citizen.getName()));
-
-                if (command.startsWith("{SendMessage}")) {
-                    String messageContent = command.substring("{SendMessage}".length()).trim();
-                    Message msg = parseColoredMessage(messageContent);
-                    if (msg != null) {
-                        playerRef.sendMessage(msg);
-                    }
-                    return CompletableFuture.completedFuture(null);
-                } else {
-                    if (commandAction.isRunAsServer()) {
-                        return CommandManager.get().handleCommand(ConsoleSender.INSTANCE, command);
-                    } else {
-                        return CommandManager.get().handleCommand(player, command);
-                    }
-                }
-            });
+        if (runNormalBehavior) {
+            runMessageFlow(
+                    playerRef,
+                    citizen,
+                    interactionSource,
+                    citizen.getMessagesConfig(),
+                    citizen.getSequentialMessageIndex()
+            );
+            runCommandFlow(
+                    playerRef,
+                    citizen,
+                    player,
+                    interactionSource,
+                    citizen.getCommandActions(),
+                    citizen.getCommandSelectionMode(),
+                    citizen.getSequentialCommandIndex()
+            );
         }
     }
 
-    private static void sendRandomMessage(@Nonnull PlayerRef playerRef, @Nonnull CitizenData citizen,
-                                          @Nonnull List<CitizenMessage> messages) {
-        CitizenMessage selected = messages.get(RANDOM.nextInt(messages.size()));
-        dispatchMessage(playerRef, citizen, selected);
+    private static void runMessageFlow(@Nonnull PlayerRef playerRef, @Nonnull CitizenData citizen,
+                                       @Nonnull String interactionSource, @Nonnull MessagesConfig msgConfig,
+                                       @Nonnull Map<UUID, Integer> sequentialIndexMap) {
+        if (!msgConfig.isEnabled()) {
+            return;
+        }
+
+        List<CitizenMessage> matchingMessages = msgConfig.getMessages().stream()
+                .filter(m -> m.isTriggeredBy(interactionSource))
+                .filter(CitizenInteraction::passesChance)
+                .collect(Collectors.toList());
+
+        if (matchingMessages.isEmpty()) {
+            return;
+        }
+
+        List<CitizenMessage> selected = selectMessagesByMode(
+                matchingMessages, msgConfig.getSelectionMode(), sequentialIndexMap, playerRef.getUuid());
+        sendMessages(playerRef, citizen, selected);
     }
 
-    private static void sendSequentialMessage(@Nonnull CitizenData citizen, @Nonnull PlayerRef playerRef,
-                                              @Nonnull List<CitizenMessage> messages) {
-        UUID playerUUID = playerRef.getUuid();
-        int startIndex = citizen.getSequentialMessageIndex().getOrDefault(playerUUID, 0);
+    private static void runCommandFlow(@Nonnull PlayerRef playerRef, @Nonnull CitizenData citizen,
+                                       @Nonnull Player player, @Nonnull String interactionSource,
+                                       @Nonnull List<CommandAction> commands, @Nonnull String commandSelectionMode,
+                                       @Nonnull Map<UUID, Integer> sequentialIndexMap) {
+        List<CommandAction> matchingCommands = commands.stream()
+                .filter(cmd -> cmd.isTriggeredBy(interactionSource))
+                .filter(CitizenInteraction::passesChance)
+                .collect(Collectors.toList());
 
-        int subsetIndex = startIndex % messages.size();
-        CitizenMessage selected = messages.get(subsetIndex);
-        citizen.getSequentialMessageIndex().put(playerUUID, subsetIndex + 1);
+        if (matchingCommands.isEmpty()) {
+            return;
+        }
 
-        dispatchMessage(playerRef, citizen, selected);
+        List<CommandAction> selected = selectCommandsByMode(
+                matchingCommands, commandSelectionMode, sequentialIndexMap, playerRef.getUuid());
+        runCommands(playerRef, citizen, player, selected);
     }
 
-    private static void sendAllMessages(@Nonnull PlayerRef playerRef, @Nonnull CitizenData citizen,
-                                        @Nonnull List<CitizenMessage> messages) {
+    @Nonnull
+    private static List<CitizenMessage> selectMessagesByMode(@Nonnull List<CitizenMessage> messages,
+                                                             @Nonnull String selectionMode,
+                                                             @Nonnull Map<UUID, Integer> sequentialIndexMap,
+                                                             @Nonnull UUID playerUuid) {
+        if (messages.isEmpty()) {
+            return List.of();
+        }
+        return switch (selectionMode.toUpperCase(Locale.ROOT)) {
+            case "ALL" -> new ArrayList<>(messages);
+            case "SEQUENTIAL" -> {
+                int startIndex = sequentialIndexMap.getOrDefault(playerUuid, 0);
+                int subsetIndex = startIndex % messages.size();
+                sequentialIndexMap.put(playerUuid, subsetIndex + 1);
+                yield List.of(messages.get(subsetIndex));
+            }
+            default -> List.of(messages.get(RANDOM.nextInt(messages.size())));
+        };
+    }
+
+    @Nonnull
+    private static List<CommandAction> selectCommandsByMode(@Nonnull List<CommandAction> commands,
+                                                            @Nonnull String selectionMode,
+                                                            @Nonnull Map<UUID, Integer> sequentialIndexMap,
+                                                            @Nonnull UUID playerUuid) {
+        if (commands.isEmpty()) {
+            return List.of();
+        }
+        return switch (selectionMode.toUpperCase(Locale.ROOT)) {
+            case "ALL" -> new ArrayList<>(commands);
+            case "SEQUENTIAL" -> {
+                int startIndex = sequentialIndexMap.getOrDefault(playerUuid, 0);
+                int subsetIndex = startIndex % commands.size();
+                sequentialIndexMap.put(playerUuid, subsetIndex + 1);
+                yield List.of(commands.get(subsetIndex));
+            }
+            default -> List.of(commands.get(RANDOM.nextInt(commands.size())));
+        };
+    }
+
+    private static boolean passesChance(@Nonnull CommandAction action) {
+        return RANDOM.nextFloat() * 100.0f <= action.getChancePercent();
+    }
+
+    private static boolean passesChance(@Nonnull CitizenMessage message) {
+        return RANDOM.nextFloat() * 100.0f <= message.getChancePercent();
+    }
+
+    private static void sendMessages(@Nonnull PlayerRef playerRef, @Nonnull CitizenData citizen,
+                                     @Nonnull List<CitizenMessage> messages) {
         CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
 
         for (CitizenMessage cm : messages) {
@@ -279,37 +437,71 @@ public class CitizenInteraction {
             chain = chain.thenCompose(v -> {
                 String text = replacePlaceholders(msg.getMessage(), playerRef, citizen);
                 Message parsed = parseColoredMessage(text);
-                if (parsed != null) playerRef.sendMessage(parsed);
+                if (parsed != null) {
+                    playerRef.sendMessage(parsed);
+                }
                 return CompletableFuture.completedFuture(null);
             });
         }
     }
 
-    private static void dispatchMessage(@Nonnull PlayerRef playerRef, @Nonnull CitizenData citizen,
-                                        @Nonnull CitizenMessage cm) {
-        String text = replacePlaceholders(cm.getMessage(), playerRef, citizen);
-        Message parsed = parseColoredMessage(text);
-        if (parsed == null) return;
+    private static void runCommands(@Nonnull PlayerRef playerRef, @Nonnull CitizenData citizen,
+                                    @Nonnull Player player, @Nonnull List<CommandAction> commands) {
+        CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
 
-        if (cm.getDelaySeconds() > 0) {
-            final Message finalMsg = parsed;
-            HytaleServer.SCHEDULED_EXECUTOR.schedule(
-                    () -> playerRef.sendMessage(finalMsg),
-                    (long) (cm.getDelaySeconds() * 1000),
-                    TimeUnit.MILLISECONDS);
-        } else {
-            playerRef.sendMessage(parsed);
+        for (CommandAction commandAction : commands) {
+            chain = chain.thenCompose(v -> {
+                if (commandAction.getDelaySeconds() > 0) {
+                    CompletableFuture<Void> delayedFuture = new CompletableFuture<>();
+                    HytaleServer.SCHEDULED_EXECUTOR.schedule(
+                            () -> delayedFuture.complete(null),
+                            (long) (commandAction.getDelaySeconds() * 1000),
+                            TimeUnit.MILLISECONDS);
+                    return delayedFuture;
+                }
+                return CompletableFuture.completedFuture(null);
+            }).thenCompose(v -> {
+                String command = replacePlaceholders(commandAction.getCommand(), playerRef, citizen);
+
+                if (command.startsWith("{SendMessage}")) {
+                    String messageContent = command.substring("{SendMessage}".length()).trim();
+                    Message msg = parseColoredMessage(messageContent);
+                    if (msg != null) {
+                        playerRef.sendMessage(msg);
+                    }
+                    return CompletableFuture.completedFuture(null);
+                }
+
+                if (commandAction.isRunAsServer()) {
+                    return CommandManager.get().handleCommand(ConsoleSender.INSTANCE, command);
+                }
+                return CommandManager.get().handleCommand(player, command);
+            });
         }
     }
 
     private static String replacePlaceholders(@Nonnull String text, @Nonnull PlayerRef playerRef,
                                               @Nonnull CitizenData citizen) {
+        Vector3d npcPos = citizen.getCurrentPosition() != null ? citizen.getCurrentPosition() : citizen.getPosition();
+        String npcX = String.format(Locale.ROOT, "%.2f", npcPos.x);
+        String npcY = String.format(Locale.ROOT, "%.2f", npcPos.y);
+        String npcZ = String.format(Locale.ROOT, "%.2f", npcPos.z);
+
         text = PLAYER_NAME_PATTERN
                 .matcher(text)
                 .replaceAll(Matcher.quoteReplacement(playerRef.getUsername()));
         text = CITIZEN_NAME_PATTERN
                 .matcher(text)
                 .replaceAll(Matcher.quoteReplacement(citizen.getName()));
+        text = NPC_X_PATTERN
+                .matcher(text)
+                .replaceAll(Matcher.quoteReplacement(npcX));
+        text = NPC_Y_PATTERN
+                .matcher(text)
+                .replaceAll(Matcher.quoteReplacement(npcY));
+        text = NPC_Z_PATTERN
+                .matcher(text)
+                .replaceAll(Matcher.quoteReplacement(npcZ));
         return text;
     }
 }

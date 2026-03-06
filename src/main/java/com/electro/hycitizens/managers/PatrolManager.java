@@ -124,7 +124,12 @@ public class PatrolManager {
                 return;
             }
 
-            TransformComponent npcTransform = citizen.getNpcRef().getStore().getComponent(citizen.getNpcRef(), TransformComponent.getComponentType());
+            Ref<EntityStore> npcRef = citizen.getNpcRef();
+            if (npcRef == null || !npcRef.isValid()) {
+                return;
+            }
+
+            TransformComponent npcTransform = npcRef.getStore().getComponent(npcRef, TransformComponent.getComponentType());
             if (npcTransform == null) {
                 return;
             }
@@ -205,7 +210,12 @@ public class PatrolManager {
 
             moveTargets.put(citizen.getId(), targetRef);
 
-            NPCEntity npcEntity = citizen.getNpcRef().getStore().getComponent(citizen.getNpcRef(), NPCEntity.getComponentType());
+            Ref<EntityStore> npcRef = citizen.getNpcRef();
+            if (npcRef == null || !npcRef.isValid()) {
+                return;
+            }
+
+            NPCEntity npcEntity = npcRef.getStore().getComponent(npcRef, NPCEntity.getComponentType());
             if (npcEntity == null || npcEntity.getRole() == null) {
                 return;
             }
@@ -334,6 +344,45 @@ public class PatrolManager {
             return false;
         }
         config.set("paths." + name, null);
+        return true;
+    }
+
+    public boolean renamePath(@Nonnull String oldName, @Nonnull String newName) {
+        String oldTrimmed = oldName.trim();
+        String newTrimmed = newName.trim();
+        if (oldTrimmed.isEmpty() || newTrimmed.isEmpty()) {
+            return false;
+        }
+        if (oldTrimmed.equals(newTrimmed)) {
+            return true;
+        }
+        if (!paths.containsKey(oldTrimmed) || paths.containsKey(newTrimmed)) {
+            return false;
+        }
+
+        PatrolPath path = paths.remove(oldTrimmed);
+        if (path == null) {
+            return false;
+        }
+
+        path.setName(newTrimmed);
+        paths.put(newTrimmed, path);
+
+        config.set("paths." + oldTrimmed, null);
+        writePathToConfig(path);
+
+        List<String> toRestart = new ArrayList<>();
+        for (PatrolSession session : activeSessions.values()) {
+            if (oldTrimmed.equals(session.pathName)) {
+                toRestart.add(session.citizenId);
+            }
+        }
+
+        for (String citizenId : toRestart) {
+            stopPatrol(citizenId);
+            startPatrol(citizenId, newTrimmed);
+        }
+
         return true;
     }
 

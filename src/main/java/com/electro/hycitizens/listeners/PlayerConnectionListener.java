@@ -140,6 +140,11 @@ public class PlayerConnectionListener {
         for (CitizenData citizen : citizens) {
             citizen.lastLookDirections.remove(playerUuid);
             citizen.getSequentialMessageIndex().remove(playerUuid);
+            citizen.getSequentialCommandIndex().remove(playerUuid);
+            citizen.getSequentialDeathMessageIndex().remove(playerUuid);
+            citizen.getSequentialDeathCommandIndex().remove(playerUuid);
+            citizen.getSequentialFirstInteractionMessageIndex().remove(playerUuid);
+            citizen.getSequentialFirstInteractionCommandIndex().remove(playerUuid);
             citizen.getPlayersInProximity().remove(playerUuid);
         }
     }

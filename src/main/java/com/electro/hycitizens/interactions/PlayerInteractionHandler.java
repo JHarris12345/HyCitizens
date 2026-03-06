@@ -8,6 +8,10 @@ import com.hypixel.hytale.protocol.InteractionType;
 import com.hypixel.hytale.protocol.Packet;
 import com.hypixel.hytale.protocol.packets.interaction.SyncInteractionChain;
 import com.hypixel.hytale.protocol.packets.interaction.SyncInteractionChains;
+import com.hypixel.hytale.server.core.Message;
+import com.hypixel.hytale.server.core.entity.UUIDComponent;
+import com.hypixel.hytale.server.core.entity.entities.Player;
+import com.hypixel.hytale.server.core.inventory.ItemStack;
 import com.hypixel.hytale.server.core.io.PacketHandler;
 import com.hypixel.hytale.server.core.io.adapter.PacketAdapters;
 import com.hypixel.hytale.server.core.io.adapter.PacketWatcher;
@@ -17,6 +21,7 @@ import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 
 import javax.annotation.Nonnull;
+import java.awt.*;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -106,19 +111,60 @@ public class PlayerInteractionHandler implements PacketWatcher {
             return;
         }
 
+        UUID interactedUuid = null;
+        UUIDComponent uuidComponent = entity.getStore().getComponent(entity, UUIDComponent.getComponentType());
+        if (uuidComponent != null) {
+            interactedUuid = uuidComponent.getUuid();
+        }
+
         List<CitizenData> citizens = HyCitizensPlugin.get().getCitizensManager().getAllCitizens();
         for (CitizenData citizen : citizens) {
-            if (citizen.getNpcRef() == null || !citizen.getNpcRef().isValid())
-                continue;
+            Ref<EntityStore> npcRef = citizen.getNpcRef();
+            boolean isDirectRefMatch = npcRef != null && npcRef.isValid() && npcRef.equals(entity);
+            boolean isUuidMatch = interactedUuid != null && citizen.getSpawnedUUID() != null
+                    && citizen.getSpawnedUUID().equals(interactedUuid);
 
-            if (!citizen.getNpcRef().equals(entity)) {
+            if (!isDirectRefMatch && !isUuidMatch) {
                 continue;
             }
 
-            // CitizenInteraction will do its own early-exit if no actions match the source.
-            CitizenInteraction.handleInteraction(citizen, playerRef, interactionSource);
+            // If the ref became stale after chunk/entity reattachment, repair it from the interacted entity.
+            if (!isDirectRefMatch) {
+                //getLogger().atInfo().log("Recovered citizen NPC ref from UUID match for " + citizen.getId());
+                HyCitizensPlugin.get().getCitizensManager().bindCitizenEntityBinding(citizen, entity);
+            }
+
+            if (!handleCitizenStick(playerRef, citizen)) {
+                CitizenInteraction.handleInteraction(citizen, playerRef, interactionSource);
+            }
             break;
         }
+    }
+
+    private boolean handleCitizenStick(@Nonnull PlayerRef playerRef, CitizenData citizen) {
+        Ref<EntityStore> ref = playerRef.getReference();
+        if (ref == null || !ref.isValid()) {
+            return false;
+        }
+
+        Player player = ref.getStore().getComponent(ref, Player.getComponentType());
+        if (player == null) {
+            return false;
+        }
+
+        ItemStack held = player.getInventory().getItemInHand();
+        if (held == null || !"CitizenStick".equals(held.getItemId())) {
+            return false;
+        }
+
+        if (!player.hasPermission("hycitizens.admin")) {
+            player.sendMessage(Message.raw("You need hycitizens.admin to use the Citizen Stick.").color(Color.RED));
+            return false;
+        }
+
+        HyCitizensPlugin.get().getCitizensUI().openEditCitizenGUI(playerRef, ref.getStore(), citizen);
+
+        return true;
     }
 
     private boolean checkCooldown(@Nonnull UUID playerUuid) {

@@ -31,6 +31,7 @@ import javax.annotation.Nullable;
 import java.awt.*;
 import java.util.*;
 import java.util.List;
+import java.util.function.Consumer;
 
 public class CitizensUI {
     private final HyCitizensPlugin plugin;
@@ -116,6 +117,50 @@ public class CitizensUI {
             sb.append(">").append(escapeHtml(name)).append("</option>\n");
         }
         return sb.toString();
+    }
+
+    private String generatePlayerAttitudeOptions(String selectedValue) {
+        String normalized = normalizePlayerAttitude(selectedValue);
+        StringBuilder sb = new StringBuilder();
+        appendOption(sb, "PASSIVE", "Passive", "PASSIVE".equals(normalized));
+        appendOption(sb, "NEUTRAL", "Neutral", "NEUTRAL".equals(normalized));
+        appendOption(sb, "AGGRESSIVE", "Aggressive", "AGGRESSIVE".equals(normalized));
+        return sb.toString();
+    }
+
+    private String generateNpcAttitudeOptions(String selectedValue) {
+        String normalized = normalizeNpcAttitude(selectedValue);
+        StringBuilder sb = new StringBuilder();
+        appendOption(sb, "PASSIVE", "PASSIVE", "PASSIVE".equals(normalized));
+        appendOption(sb, "NEUTRAL", "NEUTRAL", "NEUTRAL".equals(normalized));
+        appendOption(sb, "AGGRESSIVE", "AGGRESSIVE", "AGGRESSIVE".equals(normalized));
+        return sb.toString();
+    }
+
+    private void appendOption(StringBuilder sb, String value, String label, boolean selected) {
+        sb.append("<option value=\"").append(escapeHtml(value)).append("\"");
+        if (selected) {
+            sb.append(" selected");
+        }
+        sb.append(">").append(escapeHtml(label)).append("</option>\n");
+    }
+
+    private String normalizePlayerAttitude(String value) {
+        if (value == null) return "PASSIVE";
+        return switch (value.toUpperCase(Locale.ROOT)) {
+            case "NEUTRAL" -> "NEUTRAL";
+            case "AGGRESSIVE" -> "AGGRESSIVE";
+            default -> "PASSIVE";
+        };
+    }
+
+    private String normalizeNpcAttitude(String value) {
+        if (value == null) return "PASSIVE";
+        return switch (value.trim().toUpperCase(Locale.ROOT)) {
+            case "NEUTRAL" -> "NEUTRAL";
+            case "AGGRESSIVE", "HOSTILE" -> "AGGRESSIVE";
+            default -> "PASSIVE"; // Also maps legacy IGNORE.
+        };
     }
 
     public enum Tab {
@@ -737,7 +782,7 @@ public class CitizensUI {
                     }
 
                     .button-group {
-                        layout: left;
+                        layout: center;
                         flex-weight: 0;
                     }
 
@@ -1006,6 +1051,12 @@ public class CitizensUI {
                         </div>
                         
                         <div class="spacer-sm"></div>
+
+                        <div class="form-row">
+                            <button id="edit-closest-btn" class="secondary-button" style="anchor-width: 220; anchor-height: 40;">Edit Closest Citizen</button>
+                            <div class="spacer-h-sm"></div>
+                            <button id="get-citizen-stick-btn" class="secondary-button" style="anchor-width: 220; anchor-height: 40;">Get Citizen Stick</button>
+                        </div>
                         
                         {{#if isViewingGroup}}
                         <!-- Viewing Specific Group -->
@@ -1049,6 +1100,8 @@ public class CitizensUI {
                                 </div>
                                 <div class="list-item-actions">
                                     <button id="view-group-{{$groupId}}" class="secondary-button small-secondary-button" style="anchor-width: 110;">View</button>
+                                    <div class="spacer-h-sm"></div>
+                                    <button id="rename-group-{{$groupId}}" class="secondary-button small-secondary-button" style="anchor-width: 130;">Rename</button>
                                 </div>
                             </div>
                             {{/if}}
@@ -1081,14 +1134,14 @@ public class CitizensUI {
 
     public void openCreateCitizenGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store) {
         openCreateCitizenGUI(playerRef, store, true, "", 0, false, false, "",
-                1.0f, "", "", false, false, "", true, "");
+                1.0f, "", "", false, false, "", true, "", 25.0f);
     }
 
     public void openCreateCitizenGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store,
                                      boolean isPlayerModel, String name, float nametagOffset, boolean hideNametag, boolean hideNpc,
                                      String modelId, float scale, String permission, String permMessage, boolean useLiveSkin,
                                      boolean preserveState, String skinUsername, boolean rotateTowardsPlayer,
-                                     String group) {
+                                     String group, float lookAtDistance) {
 
         List<String> allGroups = plugin.getCitizensManager().getAllGroups();
         String groupOptionsHTML = generateGroupDropdownOptions(group, allGroups);
@@ -1108,6 +1161,7 @@ public class CitizensUI {
                 .setVariable("useLiveSkin", useLiveSkin)
                 .setVariable("skinUsername", escapeHtml(skinUsername))
                 .setVariable("rotateTowardsPlayer", rotateTowardsPlayer)
+                .setVariable("lookAtDistance", lookAtDistance)
                 .setVariable("entityOptions", generateEntityDropdownOptions(modelId.isEmpty() ? "PlayerTestModel_V" : modelId));
 
         String html = template.process(getSharedStyles() + """
@@ -1143,7 +1197,8 @@ public class CitizensUI {
                                              <input type="text" id="citizen-name" class="form-input" value="{{$name}}"\s
                                                     placeholder="Enter a display name" />
                                              <p class="form-hint" style="text-align: center;">This will be displayed above the NPC</p>
-                                             <p class="form-hint" style="text-align: center;">You can type "\\n" between lines</p>
+                                             <div class="spacer-xs"></div>
+                                             <button id="edit-nametag-lines-btn" class="secondary-button small-secondary-button" style="anchor-width: 190;">Nametag Lines</button>
                                          </div>
                                      </div>
                 
@@ -1291,6 +1346,12 @@ public class CitizensUI {
                                         <p class="checkbox-description">The citizen will face players when they approach</p>
                                     </div>
                                 </div>
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <div style="anchor-width: 260;">
+                                        {{@numberField:id=look-at-distance,label=Look-At Distance,value={{$lookAtDistance}},placeholder=25,min=0,max=200,step=1,decimals=0}}
+                                    </div>
+                                </div>
                             </div>
                 
                             <div class="spacer-md"></div>
@@ -1371,7 +1432,7 @@ public class CitizensUI {
                 .fromHtml(html);
 
         setupCreateCitizenListeners(page, playerRef, store, isPlayerModel, name, nametagOffset, hideNametag, hideNpc,
-                modelId, scale, permission, permMessage, useLiveSkin, skinUsername, rotateTowardsPlayer, group);
+                modelId, scale, permission, permMessage, useLiveSkin, skinUsername, rotateTowardsPlayer, group, lookAtDistance);
 
         page.open(store);
     }
@@ -1385,6 +1446,7 @@ public class CitizensUI {
                 .setVariable("isPlayerModel", citizen.isPlayerModel())
                 .setVariable("useLiveSkin", citizen.isUseLiveSkin())
                 .setVariable("rotateTowardsPlayer", citizen.getRotateTowardsPlayer())
+                .setVariable("lookAtDistance", citizen.getLookAtDistance())
                 .setVariable("hideNametag", citizen.isHideNametag())
                 .setVariable("hideNpc", citizen.isHideNpc())
                 .setVariable("groupOptions", groupOptionsHTML)
@@ -1418,7 +1480,8 @@ public class CitizensUI {
                                             <input type="text" id="citizen-name" class="form-input" value="{{$citizen.name}}"\s
                                                    placeholder="Enter a display name" maxlength="32" />
                                             <p class="form-hint" style="text-align: center;">This will be displayed above the NPC</p>
-                                            <p class="form-hint" style="text-align: center;">You can type "\\n" between lines</p>
+                                            <div class="spacer-xs"></div>
+                                            <button id="edit-nametag-lines-btn" class="secondary-button small-secondary-button" style="anchor-width: 190;">Nametag Lines</button>
                                         </div>
                                     </div>
                 
@@ -1573,6 +1636,12 @@ public class CitizensUI {
                                         <p class="checkbox-description">The citizen will face players when they approach</p>
                                     </div>
                                 </div>
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <div style="anchor-width: 260;">
+                                        {{@numberField:id=look-at-distance,label=Look-At Distance,value={{$lookAtDistance}},placeholder=25,min=0,max=200,step=1,decimals=0}}
+                                    </div>
+                                </div>
                             </div>
                 
                             <div class="spacer-md"></div>
@@ -1639,17 +1708,19 @@ public class CitizensUI {
                                 {{@sectionHeader:title=Quick Actions,description= }}
                 
                                 <div class="form-row">
-                                    <button id="edit-commands-btn" class="secondary-button" style="anchor-width: 200; anchor-height: 44;">Edit Commands</button>
+                                    <button id="edit-commands-btn" class="secondary-button" style="anchor-width: 200; anchor-height: 44;">Commands</button>
+                                    <div class="spacer-h-sm"></div>
+                                    <button id="messages-btn" class="secondary-button" style="anchor-width: 200; anchor-height: 44;">Messages</button>
                                     <div class="spacer-h-sm"></div>
                                     <button id="set-items-btn" class="secondary-button" style="anchor-width: 200; anchor-height: 44;">Set Items</button>
-                                    <div class="spacer-h-sm"></div>
-                                    <button id="change-position-btn" class="secondary-button" style="anchor-width: 210; anchor-height: 44;">Update Position</button>
                                 </div>
                                 <div class="spacer-sm"></div>
                                 <div class="form-row">
                                     <button id="behaviors-btn" class="secondary-button" style="anchor-width: 200; anchor-height: 44;">Behaviors</button>
                                     <div class="spacer-h-sm"></div>
-                                    <button id="messages-btn" class="secondary-button" style="anchor-width: 200; anchor-height: 44;">Messages</button>
+                                    <button id="change-position-btn" class="secondary-button" style="anchor-width: 210; anchor-height: 44;">Update Position</button>
+                                    <div class="spacer-h-sm"></div>
+                                    <button id="first-interaction-btn" class="secondary-button" style="anchor-width: 240; anchor-height: 44;">First Interaction</button>
                                 </div>
                             </div>
                 
@@ -1715,6 +1786,8 @@ public class CitizensUI {
         private final String triggerLabel;
         private final float delaySeconds;
         private final boolean hasDelay;
+        private final float chancePercent;
+        private final boolean hasChanceModifier;
 
         public IndexedMessage(int index, CitizenMessage msg) {
             this.index = index;
@@ -1732,6 +1805,8 @@ public class CitizensUI {
             };
             this.delaySeconds = msg.getDelaySeconds();
             this.hasDelay = msg.getDelaySeconds() > 0;
+            this.chancePercent = msg.getChancePercent();
+            this.hasChanceModifier = msg.getChancePercent() < 100.0f;
         }
 
         public int getIndex() { return index; }
@@ -1741,6 +1816,8 @@ public class CitizensUI {
         public String getTriggerLabel() { return triggerLabel; }
         public float getDelaySeconds() { return delaySeconds; }
         public boolean isHasDelay() { return hasDelay; }
+        public float getChancePercent() { return chancePercent; }
+        public boolean isHasChanceModifier() { return hasChanceModifier; }
     }
 
     public static class IndexedCommandAction {
@@ -1751,6 +1828,8 @@ public class CitizensUI {
         private final boolean hasDelay;
         private final String interactionTrigger;
         private final String triggerLabel;
+        private final float chancePercent;
+        private final boolean hasChanceModifier;
 
         public IndexedCommandAction(int index, CommandAction action) {
             this.index = index;
@@ -1765,6 +1844,8 @@ public class CitizensUI {
                 case "F_KEY" -> "F Key";
                 default -> "Both";
             };
+            this.chancePercent = action.getChancePercent();
+            this.hasChanceModifier = action.getChancePercent() < 100.0f;
         }
 
         public int getIndex() { return index; }
@@ -1774,6 +1855,8 @@ public class CitizensUI {
         public boolean isHasDelay() { return hasDelay; }
         public String getInteractionTrigger() { return interactionTrigger; }
         public String getTriggerLabel() { return triggerLabel; }
+        public float getChancePercent() { return chancePercent; }
+        public boolean isHasChanceModifier() { return hasChanceModifier; }
     }
 
     public static final class IndexedWaypoint {
@@ -1807,10 +1890,18 @@ public class CitizensUI {
             indexedActions.add(new IndexedCommandAction(i, actions.get(i)));
         }
 
+        CitizenData citizen = plugin.getCitizensManager().getCitizen(citizenId);
+        String commandMode = (citizen != null) ? citizen.getCommandSelectionMode() : "ALL";
+        boolean showSelectionMode = !isCreating && citizen != null;
+
         TemplateProcessor template = createBaseTemplate()
                 .setVariable("actions", indexedActions)
                 .setVariable("hasActions", !actions.isEmpty())
-                .setVariable("actionCount", actions.size());
+                .setVariable("actionCount", actions.size())
+                .setVariable("showSelectionMode", showSelectionMode)
+                .setVariable("modeAll", "ALL".equalsIgnoreCase(commandMode))
+                .setVariable("modeRandom", "RANDOM".equalsIgnoreCase(commandMode))
+                .setVariable("modeSequential", "SEQUENTIAL".equalsIgnoreCase(commandMode));
 
         String html = template.process(getSharedStyles() + """
                 <div class="page-overlay">
@@ -1841,7 +1932,7 @@ public class CitizensUI {
 
                                 <div class="card">
                                     <div class="card-body">
-                                        <p style="color: #8b949e; font-size: 12;"><span style="color: #58a6ff;">Variables:</span> {PlayerName}, {CitizenName}</p>
+                                        <p style="color: #8b949e; font-size: 12;"><span style="color: #58a6ff;">Variables:</span> {PlayerName}, {CitizenName}, {NpcX}, {NpcY}, {NpcZ}</p>
                                         <div class="spacer-xs"></div>
                                         <p style="color: #8b949e; font-size: 12;">Each command can be triggered by <span style="color: #58a6ff;">Left Click</span>, <span style="color: #a371f7;">F Key</span>, or <span style="color: #3fb950;">Both</span>.</p>
                                     </div>
@@ -1849,6 +1940,30 @@ public class CitizensUI {
                             </div>
 
                             <div class="spacer-md"></div>
+
+                            {{#if showSelectionMode}}
+                            <div class="section">
+                                {{@sectionHeader:title=Selection Mode,description=How matching commands are selected on interaction}}
+                                <div class="form-row">
+                                    <button id="cmd-mode-all" class="{{#if modeAll}}secondary-button{{else}}secondary-button{{/if}}" style="flex-weight: 1; anchor-height: 38;">All</button>
+                                    <div class="spacer-h-sm"></div>
+                                    <button id="cmd-mode-random" class="{{#if modeRandom}}secondary-button{{else}}secondary-button{{/if}}" style="flex-weight: 1; anchor-height: 38;">Random</button>
+                                    <div class="spacer-h-sm"></div>
+                                    <button id="cmd-mode-sequential" class="{{#if modeSequential}}secondary-button{{else}}secondary-button{{/if}}" style="flex-weight: 1; anchor-height: 38;">Sequential</button>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                {{#if modeAll}}
+                                <p style="color: #8b949e; font-size: 12; text-align: center;">Runs all matching commands in order, respecting each command delay.</p>
+                                {{/if}}
+                                {{#if modeRandom}}
+                                <p style="color: #8b949e; font-size: 12; text-align: center;">Runs one random matching command each interaction.</p>
+                                {{/if}}
+                                {{#if modeSequential}}
+                                <p style="color: #8b949e; font-size: 12; text-align: center;">Cycles matching commands in order per player.</p>
+                                {{/if}}
+                            </div>
+                            <div class="spacer-md"></div>
+                            {{/if}}
 
                             <!-- Commands List -->
                             {{#if hasActions}}
@@ -1860,7 +1975,7 @@ public class CitizensUI {
                                     </div>
                                     <div class="command-content">
                                         <p class="command-text">/{{$command}}</p>
-                                        <p class="command-type">{{$triggerLabel}}{{#if hasDelay}} | Delay: {{$delaySeconds}}s{{/if}}</p>
+                                        <p class="command-type">{{$triggerLabel}}{{#if hasDelay}} | Delay: {{$delaySeconds}}s{{/if}}{{#if hasChanceModifier}} | Chance: {{$chancePercent}}%{{/if}}</p>
                                     </div>
                                     <div class="command-actions">
                                         <button id="edit-cmd-{{$index}}" class="secondary-button small-secondary-button">Edit</button>
@@ -1922,6 +2037,77 @@ public class CitizensUI {
                 openCitizensGUI(playerRef, store, currentTab, newSearchQuery, viewingGroup);
             });
 
+            page.addEventListener("edit-closest-btn", CustomUIEventBindingType.Activating, event -> {
+                UUID worldUUID = playerRef.getWorldUuid();
+                if (worldUUID == null) {
+                    playerRef.sendMessage(Message.raw("Could not determine your world.").color(Color.RED));
+                    return;
+                }
+
+                Vector3d playerPos = new Vector3d(playerRef.getTransform().getPosition());
+                List<CitizenData> nearby = plugin.getCitizensManager().getCitizensNear(playerPos, 75.0);
+                CitizenData closest = null;
+                double closestDistSq = Double.MAX_VALUE;
+
+                for (CitizenData candidate : nearby) {
+                    if (!worldUUID.equals(candidate.getWorldUUID())) {
+                        continue;
+                    }
+                    Vector3d candidatePos = candidate.getCurrentPosition() != null ? candidate.getCurrentPosition() : candidate.getPosition();
+                    double dx = candidatePos.x - playerPos.x;
+                    double dy = candidatePos.y - playerPos.y;
+                    double dz = candidatePos.z - playerPos.z;
+                    double distSq = dx * dx + dy * dy + dz * dz;
+                    if (distSq < closestDistSq) {
+                        closestDistSq = distSq;
+                        closest = candidate;
+                    }
+                }
+
+                if (closest == null) {
+                    playerRef.sendMessage(Message.raw("No nearby citizen found within 75 blocks.").color(Color.RED));
+                    return;
+                }
+
+                openEditCitizenGUI(playerRef, store, closest);
+            });
+
+            page.addEventListener("get-citizen-stick-btn", CustomUIEventBindingType.Activating, event -> {
+                Ref<EntityStore> ref = playerRef.getReference();
+                if (ref == null || !ref.isValid()) {
+                    playerRef.sendMessage(Message.raw("An error occurred.").color(Color.RED));
+                    return;
+                }
+
+                Player player = ref.getStore().getComponent(ref, Player.getComponentType());
+                if (player == null) {
+                    playerRef.sendMessage(Message.raw("An error occurred.").color(Color.RED));
+                    return;
+                }
+
+                if (!player.hasPermission("hycitizens.admin")) {
+                    playerRef.sendMessage(Message.raw("You need hycitizens.admin to get the Citizen Stick.").color(Color.RED));
+                    return;
+                }
+
+                ItemStack stack = new ItemStack("CitizenStick");
+                boolean added = false;
+                if (player.getInventory().getHotbar().canAddItemStack(stack)) {
+                    player.getInventory().getHotbar().addItemStack(stack);
+                    added = true;
+                } else if (player.getInventory().getStorage().canAddItemStack(stack)) {
+                    player.getInventory().getStorage().addItemStack(stack);
+                    added = true;
+                }
+
+                if (!added) {
+                    playerRef.sendMessage(Message.raw("Your inventory is full.").color(Color.RED));
+                    return;
+                }
+
+                playerRef.sendMessage(Message.raw("You received a Citizen Stick. Hit a citizen with it to open the Edit menu.").color(Color.GREEN));
+            });
+
             // Back button listener
             if (viewingGroup != null && !viewingGroup.isEmpty()) {
                 page.addEventListener("back-to-all", CustomUIEventBindingType.Activating, event ->
@@ -1936,6 +2122,8 @@ public class CitizensUI {
                     String rawGroupName = item.getRawGroupName();
                     page.addEventListener("view-group-" + groupId, CustomUIEventBindingType.Activating, event ->
                             openCitizensGUI(playerRef, store, Tab.MANAGE, "", rawGroupName ));
+                    page.addEventListener("rename-group-" + groupId, CustomUIEventBindingType.Activating, event ->
+                            openRenameGroupGUI(playerRef, store, rawGroupName));
                 } else {
                     // Citizen action listeners
                     CitizenData citizen = item.getRawCitizen();
@@ -1990,6 +2178,10 @@ public class CitizensUI {
                             playerSkin = new PlayerSkin(citizen.getCachedSkin());
                         }
 
+                        List<CommandAction> clonedBaseCommands = copyCommandActions(citizen.getCommandActions());
+                        MessagesConfig sourceMessagesConfig = citizen.getMessagesConfig();
+                        List<CitizenMessage> clonedBaseMessages = copyCitizenMessages(sourceMessagesConfig.getMessages());
+
                         CitizenData clonedCitizen = new CitizenData(
                                 UUID.randomUUID().toString(),
                                 citizen.getName(),
@@ -2002,7 +2194,7 @@ public class CitizensUI {
                                 new ArrayList<>(),
                                 citizen.getRequiredPermission(),
                                 citizen.getNoPermissionMessage(),
-                                new ArrayList<>(citizen.getCommandActions()),
+                                clonedBaseCommands,
                                 citizen.isPlayerModel(),
                                 citizen.isUseLiveSkin(),
                                 citizen.getSkinUsername(),
@@ -2020,6 +2212,8 @@ public class CitizensUI {
                         clonedCitizen.setNpcLeggings(citizen.getNpcLeggings());
                         clonedCitizen.setNpcHand(citizen.getNpcHand());
                         clonedCitizen.setNpcOffHand(citizen.getNpcOffHand());
+                        clonedCitizen.setLookAtDistance(citizen.getLookAtDistance());
+                        clonedCitizen.setCommandSelectionMode(citizen.getCommandSelectionMode());
 
                         // Copy behaviors and messages
                         clonedCitizen.setAnimationBehaviors(new ArrayList<>(citizen.getAnimationBehaviors()));
@@ -2030,9 +2224,9 @@ public class CitizensUI {
                                 citizen.getMovementBehavior().getWanderWidth(),
                                 citizen.getMovementBehavior().getWanderDepth()));
                         clonedCitizen.setMessagesConfig(new MessagesConfig(
-                                citizen.getMessagesConfig().getMessages(),
-                                citizen.getMessagesConfig().getSelectionMode(),
-                                citizen.getMessagesConfig().isEnabled()));
+                                clonedBaseMessages,
+                                sourceMessagesConfig.getSelectionMode(),
+                                sourceMessagesConfig.isEnabled()));
 
                         // Copy group
                         clonedCitizen.setGroup(citizen.getGroup());
@@ -2044,6 +2238,10 @@ public class CitizensUI {
                         clonedCitizen.setHealthAmount(citizen.getHealthAmount());
                         clonedCitizen.setOverrideDamage(citizen.isOverrideDamage());
                         clonedCitizen.setDamageAmount(citizen.getDamageAmount());
+                        clonedCitizen.setHealthRegenEnabled(citizen.isHealthRegenEnabled());
+                        clonedCitizen.setHealthRegenAmount(citizen.getHealthRegenAmount());
+                        clonedCitizen.setHealthRegenIntervalSeconds(citizen.getHealthRegenIntervalSeconds());
+                        clonedCitizen.setHealthRegenDelayAfterDamageSeconds(citizen.getHealthRegenDelayAfterDamageSeconds());
 
                         // Copy respawn settings
                         clonedCitizen.setRespawnOnDeath(citizen.isRespawnOnDeath());
@@ -2054,10 +2252,30 @@ public class CitizensUI {
                         DeathConfig clonedDc = new DeathConfig();
                         clonedDc.setCommandSelectionMode(srcDc.getCommandSelectionMode());
                         clonedDc.setMessageSelectionMode(srcDc.getMessageSelectionMode());
-                        clonedDc.setDropItems(srcDc.getDropItems());
-                        clonedDc.setDeathCommands(srcDc.getDeathCommands());
-                        clonedDc.setDeathMessages(srcDc.getDeathMessages());
+                        clonedDc.setDropCountMin(srcDc.getDropCountMin());
+                        clonedDc.setDropCountMax(srcDc.getDropCountMax());
+                        clonedDc.setCommandCountMin(srcDc.getCommandCountMin());
+                        clonedDc.setCommandCountMax(srcDc.getCommandCountMax());
+                        clonedDc.setMessageCountMin(srcDc.getMessageCountMin());
+                        clonedDc.setMessageCountMax(srcDc.getMessageCountMax());
+                        clonedDc.setDropItems(copyDeathDropItems(srcDc.getDropItems()));
+                        clonedDc.setDeathCommands(copyCommandActions(srcDc.getDeathCommands()));
+                        clonedDc.setDeathMessages(copyCitizenMessages(srcDc.getDeathMessages()));
                         clonedCitizen.setDeathConfig(clonedDc);
+
+                        // Copy first interaction config
+                        clonedCitizen.setFirstInteractionEnabled(citizen.isFirstInteractionEnabled());
+                        clonedCitizen.setFirstInteractionCommandSelectionMode(citizen.getFirstInteractionCommandSelectionMode());
+                        clonedCitizen.setPostFirstInteractionBehavior(citizen.getPostFirstInteractionBehavior());
+                        clonedCitizen.setRunNormalOnFirstInteraction(citizen.isRunNormalOnFirstInteraction());
+                        clonedCitizen.setFirstInteractionCommandActions(copyCommandActions(citizen.getFirstInteractionCommandActions()));
+                        MessagesConfig firstMessages = citizen.getFirstInteractionMessagesConfig();
+                        clonedCitizen.setFirstInteractionMessagesConfig(new MessagesConfig(
+                                copyCitizenMessages(firstMessages.getMessages()),
+                                firstMessages.getSelectionMode(),
+                                firstMessages.isEnabled()
+                        ));
+                        clonedCitizen.setPlayersWhoCompletedFirstInteraction(Collections.emptySet());
 
                         // Copy config objects
                         CombatConfig clonedCombat = new CombatConfig();
@@ -2118,12 +2336,208 @@ public class CitizensUI {
         }
     }
 
+    private void openRenameGroupGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store, @Nonnull String oldGroupName) {
+        TemplateProcessor template = createBaseTemplate()
+                .setVariable("oldName", escapeHtml(oldGroupName))
+                .setVariable("newName", escapeHtml(oldGroupName));
+
+        String html = template.process(getSharedStyles() + """
+                <div class="page-overlay">
+                    <div class="main-container decorated-container" style="anchor-width: 620; anchor-height: 360;">
+                        <div class="header container-title">
+                            <div class="header-content">
+                                <p class="header-title">Rename Group</p>
+                            </div>
+                        </div>
+                        <div class="body">
+                            <p class="page-description">Change group name for all citizens in this group</p>
+                            <div class="spacer-sm"></div>
+                            <div class="section">
+                                {{@formField:id=new-group-name,label=New Group Name,value={{$newName}},placeholder=Enter a new group name...}}
+                                <div class="spacer-xs"></div>
+                                <p class="form-hint">Current name: {{$oldName}}</p>
+                            </div>
+                        </div>
+                        <div class="footer">
+                            <button id="cancel-btn" class="secondary-button">Cancel</button>
+                            <div class="spacer-h-md"></div>
+                            <button id="save-btn" class="secondary-button" style="anchor-width: 180;">Rename Group</button>
+                        </div>
+                    </div>
+                </div>
+                """);
+
+        PageBuilder page = PageBuilder.pageForPlayer(playerRef)
+                .withLifetime(CustomPageLifetime.CanDismiss)
+                .fromHtml(html);
+
+        final String[] newName = {oldGroupName};
+        page.addEventListener("new-group-name", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            newName[0] = ctx.getValue("new-group-name", String.class).orElse(oldGroupName).trim();
+        });
+
+        page.addEventListener("save-btn", CustomUIEventBindingType.Activating, event -> {
+            if (newName[0].isEmpty()) {
+                playerRef.sendMessage(Message.raw("Please enter a new group name.").color(Color.RED));
+                return;
+            }
+            if (newName[0].equals(oldGroupName)) {
+                playerRef.sendMessage(Message.raw("That is already the current group name.").color(Color.YELLOW));
+                openCitizensGUI(playerRef, store, Tab.MANAGE);
+                return;
+            }
+
+            boolean renamed = plugin.getCitizensManager().renameGroup(oldGroupName, newName[0]);
+            if (!renamed) {
+                playerRef.sendMessage(Message.raw("Could not rename group. Check if the target name already exists.").color(Color.RED));
+                return;
+            }
+
+            playerRef.sendMessage(Message.raw("Group renamed to '" + newName[0] + "'.").color(Color.GREEN));
+            openCitizensGUI(playerRef, store, Tab.MANAGE);
+        });
+
+        page.addEventListener("cancel-btn", CustomUIEventBindingType.Activating, event ->
+                openCitizensGUI(playerRef, store, Tab.MANAGE));
+
+        page.open(store);
+    }
+
+    @Nonnull
+    private List<String> splitNametagLines(@Nullable String rawName) {
+        if (rawName == null || rawName.isEmpty()) {
+            return new ArrayList<>(List.of(""));
+        }
+
+        String normalized = rawName.replace("\\n", "\n");
+        String[] split = normalized.split("\\r?\\n", -1);
+        List<String> lines = new ArrayList<>();
+        Collections.addAll(lines, split);
+        if (lines.isEmpty()) {
+            lines.add("");
+        }
+        return lines;
+    }
+
+    @Nonnull
+    private String joinNametagLines(@Nonnull List<String> lines) {
+        List<String> cleaned = new ArrayList<>();
+        for (String line : lines) {
+            if (line == null) {
+                continue;
+            }
+            String trimmed = line.trim();
+            if (!trimmed.isEmpty()) {
+                cleaned.add(trimmed);
+            }
+        }
+        return String.join("\\n", cleaned);
+    }
+
+    @Nonnull
+    private String joinNametagLinesRaw(@Nonnull List<String> lines) {
+        List<String> raw = new ArrayList<>(lines.size());
+        for (String line : lines) {
+            raw.add(line == null ? "" : line);
+        }
+        return String.join("\\n", raw);
+    }
+
+    private void openNametagLinesGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store,
+                                     @Nonnull String currentName, @Nonnull Consumer<String> onDone,
+                                     @Nonnull Runnable onCancel) {
+        List<String> lines = splitNametagLines(currentName);
+        StringBuilder linesHtml = new StringBuilder();
+
+        for (int i = 0; i < lines.size(); i++) {
+            linesHtml.append("""
+                    <div class="form-row">
+                        <div style="flex-weight: 1;">
+                            <input type="text" id="line-%d" class="form-input" value="%s" placeholder="Enter line %d..." />
+                        </div>
+                        <div class="spacer-h-sm"></div>
+                        <button id="delete-line-%d" class="secondary-button small-secondary-button" style="anchor-width: 95;">Delete</button>
+                    </div>
+                    <div class="spacer-xs"></div>
+                    """.formatted(i, escapeHtml(lines.get(i)), i + 1, i));
+        }
+
+        TemplateProcessor template = createBaseTemplate()
+                .setVariable("lineCount", lines.size());
+
+        String html = template.process(getSharedStyles() + """
+                <div class="page-overlay">
+                    <div class="main-container decorated-container" style="anchor-width: 760; anchor-height: 720;">
+                        <div class="header container-title">
+                            <div class="header-content">
+                                <p class="header-title">Nametag Lines</p>
+                            </div>
+                        </div>
+                        <div class="body" data-hyui-scrollbar-style='"Common.ui" "DefaultScrollbarStyle"' style="layout-mode: TopScrolling;">
+                            <p class="page-description">Build multi-line nametags with dedicated line entries ({{$lineCount}} lines)</p>
+                            <div class="spacer-sm"></div>
+                            <div class="section">
+                                {{@sectionHeader:title=Lines,description=Each non-empty line will be shown above the citizen}}
+                """ + linesHtml + """
+                                <div class="spacer-xs"></div>
+                                <button id="add-line-btn" class="secondary-button" style="anchor-width: 170;">Add Line</button>
+                            </div>
+                        </div>
+                        <div class="footer">
+                            <button id="cancel-btn" class="secondary-button">Cancel</button>
+                            <div class="spacer-h-md"></div>
+                            <button id="save-btn" class="secondary-button" style="anchor-width: 170;">Save</button>
+                        </div>
+                    </div>
+                </div>
+                """);
+
+        PageBuilder page = PageBuilder.pageForPlayer(playerRef)
+                .withLifetime(CustomPageLifetime.CanDismiss)
+                .fromHtml(html);
+
+        final String[] lineValues = lines.toArray(new String[0]);
+
+        for (int i = 0; i < lines.size(); i++) {
+            final int idx = i;
+            page.addEventListener("line-" + i, CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+                lineValues[idx] = ctx.getValue("line-" + idx, String.class).orElse("");
+            });
+
+            page.addEventListener("delete-line-" + i, CustomUIEventBindingType.Activating, event -> {
+                List<String> updated = new ArrayList<>(Arrays.asList(lineValues));
+                if (idx >= 0 && idx < updated.size()) {
+                    updated.remove(idx);
+                }
+                if (updated.isEmpty()) {
+                    updated.add("");
+                }
+                openNametagLinesGUI(playerRef, store, joinNametagLinesRaw(updated), onDone, onCancel);
+            });
+        }
+
+        page.addEventListener("add-line-btn", CustomUIEventBindingType.Activating, event -> {
+            List<String> updated = new ArrayList<>(Arrays.asList(lineValues));
+            updated.add("");
+            openNametagLinesGUI(playerRef, store, joinNametagLinesRaw(updated), onDone, onCancel);
+        });
+
+        page.addEventListener("save-btn", CustomUIEventBindingType.Activating, event -> {
+            String merged = joinNametagLines(new ArrayList<>(Arrays.asList(lineValues)));
+            onDone.accept(merged);
+        });
+
+        page.addEventListener("cancel-btn", CustomUIEventBindingType.Activating, event -> onCancel.run());
+
+        page.open(store);
+    }
+
     private void setupCreateCitizenListeners(PageBuilder page, PlayerRef playerRef, Store<EntityStore> store,
                                              boolean initialIsPlayerModel, String initialName, float initialNametagOffset,
                                              boolean initialHideNametag, boolean initialHideNpc, String initialModelId, float initialScale,
                                              String initialPermission, String initialPermMessage, boolean initialUseLiveSkin,
                                              String initialSkinUsername, boolean initialRotateTowardsPlayer,
-                                             String initialGroup) {
+                                             String initialGroup, float initialLookAtDistance) {
         final List<CommandAction> tempActions = new ArrayList<>();
         final String[] currentName = {initialName};
         final float[] nametagOffset = {initialNametagOffset};
@@ -2139,6 +2553,7 @@ public class CitizensUI {
         final PlayerSkin[] cachedSkin = {null};
         final boolean[] rotateTowardsPlayer = {initialRotateTowardsPlayer};
         final String[] currentGroup = {initialGroup};
+        final float[] lookAtDistance = {initialLookAtDistance};
 
         page.addEventListener("citizen-name", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
             currentName[0] = ctx.getValue("citizen-name", String.class).orElse("");
@@ -2185,6 +2600,32 @@ public class CitizensUI {
 
         page.addEventListener("rotate-towards-player", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
             rotateTowardsPlayer[0] = ctx.getValue("rotate-towards-player", Boolean.class).orElse(false);
+        });
+
+        try {
+            page.addEventListener("look-at-distance", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+                ctx.getValue("look-at-distance", Double.class).ifPresent(v -> lookAtDistance[0] = Math.max(0.0f, v.floatValue()));
+            });
+        } catch (IllegalArgumentException ignored) {
+            // Defensive guard in case an older cached UI layout without this field is still open.
+        }
+
+        page.addEventListener("edit-nametag-lines-btn", CustomUIEventBindingType.Activating, event -> {
+            openNametagLinesGUI(
+                    playerRef,
+                    store,
+                    currentName[0],
+                    updatedName -> openCreateCitizenGUI(
+                            playerRef, store, isPlayerModel[0], updatedName, nametagOffset[0], hideNametag[0], hideNpc[0],
+                            currentModelId[0], currentScale[0], currentPermission[0], currentPermMessage[0], useLiveSkin[0], true,
+                            skinUsername[0], rotateTowardsPlayer[0], currentGroup[0], lookAtDistance[0]
+                    ),
+                    () -> openCreateCitizenGUI(
+                            playerRef, store, isPlayerModel[0], currentName[0], nametagOffset[0], hideNametag[0], hideNpc[0],
+                            currentModelId[0], currentScale[0], currentPermission[0], currentPermMessage[0], useLiveSkin[0], true,
+                            skinUsername[0], rotateTowardsPlayer[0], currentGroup[0], lookAtDistance[0]
+                    )
+            );
         });
 
         page.addEventListener("nametag-offset", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
@@ -2249,13 +2690,13 @@ public class CitizensUI {
         page.addEventListener("type-player", CustomUIEventBindingType.Activating, (event, ctx) -> {
             openCreateCitizenGUI(playerRef, store, true, currentName[0], nametagOffset[0], hideNametag[0], hideNpc[0], currentModelId[0],
                     currentScale[0], currentPermission[0], currentPermMessage[0], useLiveSkin[0], true,
-                    skinUsername[0], rotateTowardsPlayer[0], currentGroup[0]);
+                    skinUsername[0], rotateTowardsPlayer[0], currentGroup[0], lookAtDistance[0]);
         });
 
         page.addEventListener("type-entity", CustomUIEventBindingType.Activating, (event, ctx) -> {
             openCreateCitizenGUI(playerRef, store, false, currentName[0], nametagOffset[0], hideNametag[0], hideNpc[0], currentModelId[0],
                     currentScale[0], currentPermission[0], currentPermMessage[0], useLiveSkin[0], true,
-                    skinUsername[0], rotateTowardsPlayer[0], currentGroup[0]);
+                    skinUsername[0], rotateTowardsPlayer[0], currentGroup[0], lookAtDistance[0]);
         });
 
         page.addEventListener("create-btn", CustomUIEventBindingType.Activating, event -> {
@@ -2315,6 +2756,7 @@ public class CitizensUI {
             citizen.setHideNametag(hideNametag[0]);
             citizen.setHideNpc(hideNpc[0]);
             citizen.setGroup(currentGroup[0]);
+            citizen.setLookAtDistance(lookAtDistance[0]);
             plugin.getCitizensManager().autoResolveAttackType(citizen);
 
             if (isPlayerModel[0]) {
@@ -2366,6 +2808,7 @@ public class CitizensUI {
         final boolean[] isPlayerModel = {citizen.isPlayerModel()};
         final boolean[] useLiveSkin = {citizen.isUseLiveSkin()};
         final boolean[] rotateTowardsPlayer = {citizen.getRotateTowardsPlayer()};
+        final float[] lookAtDistance = {citizen.getLookAtDistance()};
         final String[] skinUsername = {citizen.getSkinUsername()};
         final PlayerSkin[] cachedSkin = {citizen.getCachedSkin()};
         final String[] currentGroup = {citizen.getGroup()};
@@ -2435,6 +2878,28 @@ public class CitizensUI {
 
         page.addEventListener("rotate-towards-player", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
             rotateTowardsPlayer[0] = ctx.getValue("rotate-towards-player", Boolean.class).orElse(false);
+        });
+
+        try {
+            page.addEventListener("look-at-distance", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+                ctx.getValue("look-at-distance", Double.class).ifPresent(v -> lookAtDistance[0] = Math.max(0.0f, v.floatValue()));
+            });
+        } catch (IllegalArgumentException ignored) {
+            // Defensive guard in case an older cached UI layout without this field is still open.
+        }
+
+        page.addEventListener("edit-nametag-lines-btn", CustomUIEventBindingType.Activating, event -> {
+            openNametagLinesGUI(
+                    playerRef,
+                    store,
+                    citizen.getName(),
+                    updatedName -> {
+                        citizen.setName(updatedName);
+                        plugin.getCitizensManager().updateCitizenHologram(citizen, true);
+                        openEditCitizenGUI(playerRef, store, citizen);
+                    },
+                    () -> openEditCitizenGUI(playerRef, store, citizen)
+            );
         });
 
         page.addEventListener("nametag-offset", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
@@ -2587,6 +3052,10 @@ public class CitizensUI {
             openMessagesGUI(playerRef, store, citizen);
         });
 
+        page.addEventListener("first-interaction-btn", CustomUIEventBindingType.Activating, event -> {
+            openFirstInteractionConfigGUI(playerRef, store, citizen);
+        });
+
         page.addEventListener("save-btn", CustomUIEventBindingType.Activating, event -> {
             String name = currentName[0].trim();
 
@@ -2625,6 +3094,7 @@ public class CitizensUI {
             citizen.setPlayerModel(isPlayerModel[0]);
             citizen.setUseLiveSkin(useLiveSkin[0]);
             citizen.setRotateTowardsPlayer(rotateTowardsPlayer[0]);
+            citizen.setLookAtDistance(lookAtDistance[0]);
             citizen.setSkinUsername(skinUsername[0].trim());
             citizen.setNametagOffset(nametagOffset[0]);
             citizen.setHideNametag(hideNametag[0]);
@@ -2686,6 +3156,38 @@ public class CitizensUI {
 
     private void setupCommandActionsListeners(PageBuilder page, PlayerRef playerRef, Store<EntityStore> store,
                                               String citizenId, List<CommandAction> actions, boolean isCreating) {
+        if (!isCreating) {
+            page.addEventListener("cmd-mode-all", CustomUIEventBindingType.Activating, event -> {
+                CitizenData citizen = plugin.getCitizensManager().getCitizen(citizenId);
+                if (citizen == null) {
+                    return;
+                }
+                citizen.setCommandSelectionMode("ALL");
+                plugin.getCitizensManager().saveCitizen(citizen);
+                openCommandActionsGUI(playerRef, store, citizenId, actions, false);
+            });
+
+            page.addEventListener("cmd-mode-random", CustomUIEventBindingType.Activating, event -> {
+                CitizenData citizen = plugin.getCitizensManager().getCitizen(citizenId);
+                if (citizen == null) {
+                    return;
+                }
+                citizen.setCommandSelectionMode("RANDOM");
+                plugin.getCitizensManager().saveCitizen(citizen);
+                openCommandActionsGUI(playerRef, store, citizenId, actions, false);
+            });
+
+            page.addEventListener("cmd-mode-sequential", CustomUIEventBindingType.Activating, event -> {
+                CitizenData citizen = plugin.getCitizensManager().getCitizen(citizenId);
+                if (citizen == null) {
+                    return;
+                }
+                citizen.setCommandSelectionMode("SEQUENTIAL");
+                plugin.getCitizensManager().saveCitizen(citizen);
+                openCommandActionsGUI(playerRef, store, citizenId, actions, false);
+            });
+        }
+
         // "Add Command" button opens the edit GUI in add-new mode (editIndex = -1)
         page.addEventListener("add-command-btn", CustomUIEventBindingType.Activating, event -> {
             openEditCommandGUI(playerRef, store, citizenId, actions, isCreating,
@@ -2743,6 +3245,7 @@ public class CitizensUI {
                 .setVariable("command", escapeHtml(command.getCommand()))
                 .setVariable("runAsServer", command.isRunAsServer())
                 .setVariable("delaySeconds", command.getDelaySeconds())
+                .setVariable("chancePercent", command.getChancePercent())
                 .setVariable("isNew", isNew)
                 .setVariable("isLeftClick", "LEFT_CLICK".equals(currentTrigger))
                 .setVariable("isFKey", "F_KEY".equals(currentTrigger))
@@ -2750,7 +3253,7 @@ public class CitizensUI {
 
         String html = template.process(getSharedStyles() + """
                 <div class="page-overlay">
-                    <div class="main-container decorated-container" style="anchor-width: 680; anchor-height: 700;">
+                    <div class="main-container decorated-container" style="anchor-width: 680; anchor-height: 780;">
 
                         <!-- Header -->
                         <div class="header container-title">
@@ -2770,7 +3273,7 @@ public class CitizensUI {
                                 {{@sectionHeader:title=Command}}
                                 <input type="text" id="command-input" class="form-input" value="{{$command}}"
                                        placeholder="give {PlayerName} Rock_Gem_Diamond" />
-                                <p class="form-hint">The command to execute. Do not include the leading /. Use {PlayerName} or {CitizenName} as variables.</p>
+                                <p class="form-hint">The command to execute. Do not include the leading /. Variables: {PlayerName}, {CitizenName}, {NpcX}, {NpcY}, {NpcZ}.</p>
                             </div>
 
                             <div class="spacer-md"></div>
@@ -2807,6 +3310,13 @@ public class CitizensUI {
 
                             <div class="spacer-md"></div>
 
+                            <div class="section">
+                                {{@sectionHeader:title=Chance}}
+                                {{@numberField:id=chance-percent,label=Chance %,value={{$chancePercent}},placeholder=100,min=0,max=100,step=1,decimals=1,hint=Percent chance this command is selected when it is otherwise eligible}}
+                            </div>
+
+                            <div class="spacer-md"></div>
+
                             <!-- Run As Server Toggle -->
                             <div class="section">
                                 {{@sectionHeader:title=Execution Mode}}
@@ -2839,6 +3349,7 @@ public class CitizensUI {
         final String[] commandText = {command.getCommand()};
         final boolean[] runAsServer = {command.isRunAsServer()};
         final float[] delaySeconds = {command.getDelaySeconds()};
+        final float[] chancePercent = {command.getChancePercent()};
         final String[] interactionTrigger = {currentTrigger};
 
         page.addEventListener("command-input", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
@@ -2848,19 +3359,19 @@ public class CitizensUI {
         page.addEventListener("trigger-left-click", CustomUIEventBindingType.Activating, event -> {
             interactionTrigger[0] = "LEFT_CLICK";
             openEditCommandGUI(playerRef, store, citizenId, actions, isCreating,
-                    new CommandAction(commandText[0], runAsServer[0], delaySeconds[0], "LEFT_CLICK"), editIndex);
+                    new CommandAction(commandText[0], runAsServer[0], delaySeconds[0], "LEFT_CLICK", chancePercent[0]), editIndex);
         });
 
         page.addEventListener("trigger-f-key", CustomUIEventBindingType.Activating, event -> {
             interactionTrigger[0] = "F_KEY";
             openEditCommandGUI(playerRef, store, citizenId, actions, isCreating,
-                    new CommandAction(commandText[0], runAsServer[0], delaySeconds[0], "F_KEY"), editIndex);
+                    new CommandAction(commandText[0], runAsServer[0], delaySeconds[0], "F_KEY", chancePercent[0]), editIndex);
         });
 
         page.addEventListener("trigger-both", CustomUIEventBindingType.Activating, event -> {
             interactionTrigger[0] = "BOTH";
             openEditCommandGUI(playerRef, store, citizenId, actions, isCreating,
-                    new CommandAction(commandText[0], runAsServer[0], delaySeconds[0], "BOTH"), editIndex);
+                    new CommandAction(commandText[0], runAsServer[0], delaySeconds[0], "BOTH", chancePercent[0]), editIndex);
         });
 
         page.addEventListener("delay-seconds", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
@@ -2882,6 +3393,12 @@ public class CitizensUI {
             runAsServer[0] = ctx.getValue("run-as-server", Boolean.class).orElse(false);
         });
 
+        page.addEventListener("chance-percent", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("chance-percent", Double.class).ifPresent(val -> {
+                chancePercent[0] = Math.max(0.0f, Math.min(100.0f, val.floatValue()));
+            });
+        });
+
         page.addEventListener("save-cmd-btn", CustomUIEventBindingType.Activating, event -> {
             String cmd = commandText[0].trim();
             if (cmd.isEmpty()) {
@@ -2892,7 +3409,7 @@ public class CitizensUI {
                 cmd = cmd.substring(1);
             }
 
-            CommandAction saved = new CommandAction(cmd, runAsServer[0], delaySeconds[0], interactionTrigger[0]);
+            CommandAction saved = new CommandAction(cmd, runAsServer[0], delaySeconds[0], interactionTrigger[0], chancePercent[0]);
             if (isNew) {
                 actions.add(saved);
                 playerRef.sendMessage(Message.raw("Command added!").color(Color.GREEN));
@@ -2921,6 +3438,7 @@ public class CitizensUI {
         MovementBehavior mb = citizen.getMovementBehavior();
 
         String attitude = citizen.getAttitude();
+        String npcAttitude = normalizeNpcAttitude(citizen.getDefaultNpcAttitude());
         boolean takesDamage = citizen.isTakesDamage();
 
         TemplateProcessor template = createBaseTemplate()
@@ -2939,11 +3457,20 @@ public class CitizensUI {
                 .setVariable("isPassive", "PASSIVE".equals(attitude))
                 .setVariable("isNeutral", "NEUTRAL".equals(attitude))
                 .setVariable("isAggressive", "AGGRESSIVE".equals(attitude))
+                .setVariable("playerAttitudeOptions", generatePlayerAttitudeOptions(attitude))
+                .setVariable("npcAttitudeOptions", generateNpcAttitudeOptions(citizen.getDefaultNpcAttitude()))
+                .setVariable("npcIsPassive", "PASSIVE".equals(npcAttitude))
+                .setVariable("npcIsNeutral", "NEUTRAL".equals(npcAttitude))
+                .setVariable("npcIsAggressive", "AGGRESSIVE".equals(npcAttitude))
                 .setVariable("takesDamage", takesDamage)
                 .setVariable("overrideHealth", citizen.isOverrideHealth())
                 .setVariable("healthAmount", citizen.getHealthAmount())
                 .setVariable("overrideDamage", citizen.isOverrideDamage())
                 .setVariable("damageAmount", citizen.getDamageAmount())
+                .setVariable("healthRegenEnabled", citizen.isHealthRegenEnabled())
+                .setVariable("healthRegenAmount", citizen.getHealthRegenAmount())
+                .setVariable("healthRegenInterval", citizen.getHealthRegenIntervalSeconds())
+                .setVariable("healthRegenDelayAfterDamage", citizen.getHealthRegenDelayAfterDamageSeconds())
                 .setVariable("isPatrol", "PATROL".equals(mb.getType()))
                 .setVariable("isAnyWander", "WANDER".equals(mb.getType()) || "WANDER_CIRCLE".equals(mb.getType()) || "WANDER_RECT".equals(mb.getType()))
                 .setVariable("patrolPathOptions", generatePatrolPathOptions(citizen.getPathConfig().getPluginPatrolPath()))
@@ -2953,7 +3480,7 @@ public class CitizensUI {
 
         String html = template.process(getSharedStyles() + """
                 <div class="page-overlay">
-                    <div class="main-container decorated-container" style="anchor-width: 950; anchor-height: 1000;">
+                    <div class="main-container decorated-container" style="anchor-width: 950; anchor-height: 1040;">
                 
                         <!-- Header -->
                         <div class="header container-title">
@@ -2970,18 +3497,16 @@ public class CitizensUI {
                 
                             <!-- Attitude Section -->
                             <div class="section">
-                                {{@sectionHeader:title=Attitude,description=How the citizen reacts to players}}
-                
+                                {{@sectionHeader:title=Attitude Towards Player,description=How the citizen reacts to players}}
+                 
                                 <div class="form-row">
-                                    <button id="att-passive" class="{{#if isPassive}}secondary-button{{else}}secondary-button{{/if}}" style="anchor-width: 180; anchor-height: 38;">Passive</button>
-                                    <div class="spacer-h-sm"></div>
-                                    <button id="att-neutral" class="{{#if isNeutral}}secondary-button{{else}}secondary-button{{/if}}" style="anchor-width: 180; anchor-height: 38;">Neutral</button>
-                                    <div class="spacer-h-sm"></div>
-                                    <button id="att-aggressive" class="{{#if isAggressive}}secondary-button{{else}}secondary-button{{/if}}" style="anchor-width: 180; anchor-height: 38;">Aggressive</button>
+                                    <select id="player-attitude" data-hyui-showlabel="true">
+                                        {{{$playerAttitudeOptions}}}
+                                    </select>
                                 </div>
-                
+
                                 <div class="spacer-sm"></div>
-                
+
                                 {{#if isPassive}}
                                 <div class="card">
                                     <div class="card-body">
@@ -3006,6 +3531,41 @@ public class CitizensUI {
                                 <div>
                                     <p class="form-hint" style="text-align: center; color: #f85149;">Note: You must have the citizen set to "Wander" for the attitude to have an effect</p>
                                 </div>
+
+                                <div class="spacer-sm"></div>
+
+                                <div class="form-row">
+                                    <p class="form-label" style="text-align: center;">Attitude Towards NPCs</p>
+                                </div>
+                                <div class="form-row">
+                                    <select id="npc-attitude" data-hyui-showlabel="true">
+                                        {{{$npcAttitudeOptions}}}
+                                    </select>
+                                </div>
+
+                                <div class="spacer-sm"></div>
+
+                                {{#if npcIsPassive}}
+                                <div class="card">
+                                    <div class="card-body">
+                                        <p style="color: #8b949e; font-size: 12; text-align: center;">The citizen will ignore other NPCs by default.</p>
+                                    </div>
+                                </div>
+                                {{/if}}
+                                {{#if npcIsNeutral}}
+                                <div class="card">
+                                    <div class="card-body">
+                                        <p style="color: #8b949e; font-size: 12; text-align: center;">The citizen treats other NPCs as neutral by default.</p>
+                                    </div>
+                                </div>
+                                {{/if}}
+                                {{#if npcIsAggressive}}
+                                <div class="card">
+                                    <div class="card-body">
+                                        <p style="color: #8b949e; font-size: 12; text-align: center;">The citizen treats other NPCs as hostile by default.</p>
+                                    </div>
+                                </div>
+                                {{/if}}
                             </div>
                 
                             <div class="spacer-sm"></div>
@@ -3066,9 +3626,39 @@ public class CitizensUI {
                                 {{/if}}
                                 <p style="color: #8b949e; font-size: 12; text-align: center;">Override how much damage the citizen deals.</p>
                             </div>
-                
+
                             <div class="spacer-sm"></div>
-                
+
+                            <!-- Health Regeneration Section -->
+                            <div class="section">
+                                <p style="color: #c9d1d9; font-size: 12; font-weight: bold; text-align: center;">Health Regeneration</p>
+                                <div class="spacer-xs"></div>
+                                <div style="layout: center;">
+                                    <button id="toggle-health-regen" class="{{#if healthRegenEnabled}}secondary-button{{else}}secondary-button{{/if}}" style="anchor-width: 140; anchor-height: 40;">{{#if healthRegenEnabled}}Enabled{{else}}Disabled{{/if}}</button>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                {{#if healthRegenEnabled}}
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=health-regen-amount,label=Regen Amount,value={{$healthRegenAmount}},placeholder=1,min=0,max=1000,step=0.5,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=health-regen-interval,label=Regen Interval (s),value={{$healthRegenInterval}},placeholder=5,min=0.5,max=600,step=0.5,decimals=1}}
+                                    </div>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=health-regen-delay,label=Delay After Damage (s),value={{$healthRegenDelayAfterDamage}},placeholder=5,min=0,max=600,step=0.5,decimals=1}}
+                                    </div>
+                                </div>
+                                {{/if}}
+                                <p style="color: #8b949e; font-size: 12; text-align: center;">When enabled, the citizen passively heals after taking damage.</p>
+                            </div>
+
+                            <div class="spacer-sm"></div>
+
                             <!-- Respawn Section -->
                             <div class="section">
                                 <p style="color: #c9d1d9; font-size: 12; font-weight: bold; text-align: center;">Respawn on Death</p>
@@ -3230,23 +3820,20 @@ public class CitizensUI {
         final float[] wanderDepth = {mb.getWanderDepth()};
         List<AnimationBehavior> anims = new ArrayList<>(citizen.getAnimationBehaviors());
 
-        // Attitude buttons
-        page.addEventListener("att-passive", CustomUIEventBindingType.Activating, event -> {
-            citizen.setAttitude("PASSIVE");
-            plugin.getCitizensManager().saveCitizen(citizen, true);
-            openBehaviorsGUI(playerRef, store, citizen);
+        page.addEventListener("player-attitude", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("player-attitude", String.class).ifPresent(newAttitude -> {
+                citizen.setAttitude(normalizePlayerAttitude(newAttitude));
+                plugin.getCitizensManager().saveCitizen(citizen, true);
+                openBehaviorsGUI(playerRef, store, citizen);
+            });
         });
 
-        page.addEventListener("att-neutral", CustomUIEventBindingType.Activating, event -> {
-            citizen.setAttitude("NEUTRAL");
-            plugin.getCitizensManager().saveCitizen(citizen, true);
-            openBehaviorsGUI(playerRef, store, citizen);
-        });
-
-        page.addEventListener("att-aggressive", CustomUIEventBindingType.Activating, event -> {
-            citizen.setAttitude("AGGRESSIVE");
-            plugin.getCitizensManager().saveCitizen(citizen, true);
-            openBehaviorsGUI(playerRef, store, citizen);
+        page.addEventListener("npc-attitude", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("npc-attitude", String.class).ifPresent(newNpcAttitude -> {
+                citizen.setDefaultNpcAttitude(normalizeNpcAttitude(newNpcAttitude));
+                plugin.getCitizensManager().saveCitizen(citizen, true);
+                openBehaviorsGUI(playerRef, store, citizen);
+            });
         });
 
         // Takes damage toggle
@@ -3289,6 +3876,33 @@ public class CitizensUI {
             page.addEventListener("damage-amount", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
                 ctx.getValue("damage-amount", Double.class).ifPresent(val -> {
                     citizen.setDamageAmount(val.floatValue());
+                    plugin.getCitizensManager().saveCitizen(citizen);
+                });
+            });
+        }
+
+        page.addEventListener("toggle-health-regen", CustomUIEventBindingType.Activating, event -> {
+            citizen.setHealthRegenEnabled(!citizen.isHealthRegenEnabled());
+            plugin.getCitizensManager().saveCitizen(citizen);
+            openBehaviorsGUI(playerRef, store, citizen);
+        });
+
+        if (citizen.isHealthRegenEnabled()) {
+            page.addEventListener("health-regen-amount", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+                ctx.getValue("health-regen-amount", Double.class).ifPresent(v -> {
+                    citizen.setHealthRegenAmount(Math.max(0.0f, v.floatValue()));
+                    plugin.getCitizensManager().saveCitizen(citizen);
+                });
+            });
+            page.addEventListener("health-regen-interval", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+                ctx.getValue("health-regen-interval", Double.class).ifPresent(v -> {
+                    citizen.setHealthRegenIntervalSeconds(Math.max(0.5f, v.floatValue()));
+                    plugin.getCitizensManager().saveCitizen(citizen);
+                });
+            });
+            page.addEventListener("health-regen-delay", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+                ctx.getValue("health-regen-delay", Double.class).ifPresent(v -> {
+                    citizen.setHealthRegenDelayAfterDamageSeconds(Math.max(0.0f, v.floatValue()));
                     plugin.getCitizensManager().saveCitizen(citizen);
                 });
             });
@@ -3872,7 +4486,9 @@ public class CitizensUI {
                                     <div class="card-body">
                                         <p style="color: #8b949e; font-size: 12;"><span style="color: #58a6ff;">Colors:</span> {RED}, {GREEN}, {BLUE}, {YELLOW}, {#HEX}</p>
                                         <div class="spacer-xs"></div>
-                                        <p style="color: #8b949e; font-size: 12;"><span style="color: #58a6ff;">Variables:</span> {PlayerName}, {CitizenName}</p>
+                                        <p style="color: #8b949e; font-size: 12;"><span style="color: #58a6ff;">Variables:</span> {PlayerName}, {CitizenName}, {NpcX}, {NpcY}, {NpcZ}</p>
+                                        <div class="spacer-xs"></div>
+                                        <p style="color: #8b949e; font-size: 12;"><span style="color: #58a6ff;">Rich Text:</span> **bold**, *italic*, [label](https://example.com)</p>
                                         <div class="spacer-xs"></div>
                                         <p style="color: #8b949e; font-size: 12;">Each message can be triggered by <span style="color: #58a6ff;">Left Click</span>, <span style="color: #a371f7;">F Key</span>, or <span style="color: #3fb950;">Both</span>.</p>
                                     </div>
@@ -3915,7 +4531,7 @@ public class CitizensUI {
                                     </div>
                                     <div class="command-content">
                                         <p class="command-text">{{$truncated}}</p>
-                                        <p class="command-type">{{$triggerLabel}}{{#if hasDelay}} | Delay: {{$delaySeconds}}s{{/if}}</p>
+                                        <p class="command-type">{{$triggerLabel}}{{#if hasDelay}} | Delay: {{$delaySeconds}}s{{/if}}{{#if hasChanceModifier}} | Chance: {{$chancePercent}}%{{/if}}</p>
                                     </div>
                                     <div class="command-actions">
                                         <button id="edit-msg-{{$index}}" class="secondary-button small-secondary-button">Edit</button>
@@ -4022,6 +4638,7 @@ public class CitizensUI {
         TemplateProcessor template = createBaseTemplate()
                 .setVariable("message", escapeHtml(message.getMessage()))
                 .setVariable("delaySeconds", message.getDelaySeconds())
+                .setVariable("chancePercent", message.getChancePercent())
                 .setVariable("isNew", isNew)
                 .setVariable("isLeftClick", "LEFT_CLICK".equals(currentTrigger))
                 .setVariable("isFKey", "F_KEY".equals(currentTrigger))
@@ -4029,7 +4646,7 @@ public class CitizensUI {
 
         String html = template.process(getSharedStyles() + """
                 <div class="page-overlay">
-                    <div class="main-container decorated-container" style="anchor-width: 680; anchor-height: 580;">
+                    <div class="main-container decorated-container" style="anchor-width: 680; anchor-height: 700;">
 
                         <!-- Header -->
                         <div class="header container-title">
@@ -4049,7 +4666,7 @@ public class CitizensUI {
                                 {{@sectionHeader:title=Message Text}}
                                 <input type="text" id="message-input" class="form-input" value="{{$message}}"
                                        placeholder="Enter message text with optional color codes..." />
-                                <p class="form-hint">The message to send. Colors: {RED}, {GREEN}, {#HEX}. Variables: {PlayerName}, {CitizenName}</p>
+                                <p class="form-hint">Colors: {RED}, {GREEN}, {#HEX}. Rich text: **bold**, *italic*, [label](https://example.com). Variables: {PlayerName}, {CitizenName}, {NpcX}, {NpcY}, {NpcZ}.</p>
                             </div>
 
                             <div class="spacer-md"></div>
@@ -4084,6 +4701,13 @@ public class CitizensUI {
                                 {{@numberField:id=delay-seconds,label=Delay Before Message (seconds),value={{$delaySeconds}},placeholder=0,min=0,max=60,step=0.5,decimals=1,hint=Delay before this message is sent. In All mode messages send one after another with each message's delay.}}
                             </div>
 
+                            <div class="spacer-md"></div>
+
+                            <div class="section">
+                                {{@sectionHeader:title=Chance}}
+                                {{@numberField:id=chance-percent,label=Chance %,value={{$chancePercent}},placeholder=100,min=0,max=100,step=1,decimals=1,hint=Percent chance this message is selected when it is otherwise eligible}}
+                            </div>
+
                         </div>
 
                         <!-- Footer -->
@@ -4103,6 +4727,7 @@ public class CitizensUI {
 
         final String[] messageText = {message.getMessage()};
         final float[] delaySeconds = {message.getDelaySeconds()};
+        final float[] chancePercent = {message.getChancePercent()};
         final String[] interactionTrigger = {currentTrigger};
 
         page.addEventListener("message-input", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
@@ -4112,19 +4737,19 @@ public class CitizensUI {
         page.addEventListener("trigger-left-click", CustomUIEventBindingType.Activating, event -> {
             interactionTrigger[0] = "LEFT_CLICK";
             openEditMessageGUI(playerRef, store, citizen,
-                    new CitizenMessage(messageText[0], "LEFT_CLICK", delaySeconds[0]), editIndex);
+                    new CitizenMessage(messageText[0], "LEFT_CLICK", delaySeconds[0], chancePercent[0]), editIndex);
         });
 
         page.addEventListener("trigger-f-key", CustomUIEventBindingType.Activating, event -> {
             interactionTrigger[0] = "F_KEY";
             openEditMessageGUI(playerRef, store, citizen,
-                    new CitizenMessage(messageText[0], "F_KEY", delaySeconds[0]), editIndex);
+                    new CitizenMessage(messageText[0], "F_KEY", delaySeconds[0], chancePercent[0]), editIndex);
         });
 
         page.addEventListener("trigger-both", CustomUIEventBindingType.Activating, event -> {
             interactionTrigger[0] = "BOTH";
             openEditMessageGUI(playerRef, store, citizen,
-                    new CitizenMessage(messageText[0], "BOTH", delaySeconds[0]), editIndex);
+                    new CitizenMessage(messageText[0], "BOTH", delaySeconds[0], chancePercent[0]), editIndex);
         });
 
         page.addEventListener("delay-seconds", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
@@ -4142,13 +4767,19 @@ public class CitizensUI {
             }
         });
 
+        page.addEventListener("chance-percent", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("chance-percent", Double.class).ifPresent(val -> {
+                chancePercent[0] = Math.max(0.0f, Math.min(100.0f, val.floatValue()));
+            });
+        });
+
         page.addEventListener("save-msg-btn", CustomUIEventBindingType.Activating, event -> {
             if (messageText[0].trim().isEmpty()) {
                 playerRef.sendMessage(Message.raw("Message cannot be empty!").color(Color.RED));
                 return;
             }
 
-            CitizenMessage saved = new CitizenMessage(messageText[0].trim(), interactionTrigger[0], delaySeconds[0]);
+            CitizenMessage saved = new CitizenMessage(messageText[0].trim(), interactionTrigger[0], delaySeconds[0], chancePercent[0]);
             List<CitizenMessage> msgs = new ArrayList<>(citizen.getMessagesConfig().getMessages());
             MessagesConfig mc = citizen.getMessagesConfig();
 
@@ -4168,6 +4799,666 @@ public class CitizensUI {
 
         page.addEventListener("cancel-btn", CustomUIEventBindingType.Activating, event ->
                 openMessagesGUI(playerRef, store, citizen));
+
+        page.open(store);
+    }
+
+    public void openFirstInteractionConfigGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store,
+                                              @Nonnull CitizenData citizen) {
+        MessagesConfig firstMsgConfig = citizen.getFirstInteractionMessagesConfig();
+        String commandMode = "ALL".equalsIgnoreCase(citizen.getFirstInteractionCommandSelectionMode()) ? "ALL" : "RANDOM";
+        if (!commandMode.equalsIgnoreCase(citizen.getFirstInteractionCommandSelectionMode())) {
+            citizen.setFirstInteractionCommandSelectionMode(commandMode);
+            plugin.getCitizensManager().saveCitizen(citizen);
+        }
+        String messageMode = "ALL".equalsIgnoreCase(firstMsgConfig.getSelectionMode()) ? "ALL" : "RANDOM";
+
+        TemplateProcessor template = createBaseTemplate()
+                .setVariable("enabled", citizen.isFirstInteractionEnabled())
+                .setVariable("runNormalOnFirst", citizen.isRunNormalOnFirstInteraction())
+                .setVariable("cmdModeAll", "ALL".equalsIgnoreCase(commandMode))
+                .setVariable("cmdModeRandom", "RANDOM".equalsIgnoreCase(commandMode))
+                .setVariable("msgModeAll", "ALL".equalsIgnoreCase(messageMode))
+                .setVariable("msgModeRandom", "RANDOM".equalsIgnoreCase(messageMode))
+                .setVariable("firstCommandCount", citizen.getFirstInteractionCommandActions().size())
+                .setVariable("firstMessageCount", firstMsgConfig.getMessages().size())
+                .setVariable("currentCommandMode", commandMode)
+                .setVariable("currentMessageMode", messageMode)
+                .setVariable("completedCount", citizen.getPlayersWhoCompletedFirstInteraction().size());
+
+        String html = template.process(getSharedStyles() + """
+                <div class="page-overlay">
+                    <div class="main-container decorated-container" style="anchor-width: 900; anchor-height: 900;">
+                        <div class="header container-title">
+                            <div class="header-content">
+                                <p class="header-title">First Interaction Config</p>
+                            </div>
+                        </div>
+                        <div class="body">
+                            <p class="page-description">Configure one-time actions for each player the first time they interact</p>
+                            <div class="spacer-sm"></div>
+
+                            <div class="section">
+                                {{@sectionHeader:title=Enable First Interaction}}
+                                <div style="layout: center;">
+                                    <button id="toggle-first-enabled" class="secondary-button" style="anchor-width: 220; anchor-height: 40;">{{#if enabled}}Enabled{{else}}Disabled{{/if}}</button>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                <p class="form-hint" style="text-align: center;">When enabled, first-time actions run once per player.</p>
+                            </div>
+
+                            <div class="spacer-md"></div>
+
+                            <div class="section">
+                                {{@sectionHeader:title=Normal Actions On First Interaction}}
+                                <div style="layout: center;">
+                                    <button id="toggle-run-normal-first-btn" class="secondary-button" style="anchor-width: 320; anchor-height: 40;">{{#if runNormalOnFirst}}Enabled{{else}}Disabled{{/if}}</button>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                <p class="form-hint" style="text-align: center;">When enabled, normal commands/messages also run during the first interaction.</p>
+                            </div>
+
+                            <div class="spacer-md"></div>
+
+                            <div class="section">
+                                {{@sectionHeader:title=First Commands ({{$firstCommandCount}})}}
+                                <p class="form-hint" style="text-align: center;">Current mode: {{$currentCommandMode}}</p>
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <button id="first-cmd-mode-all" class="{{#if cmdModeAll}}secondary-button{{else}}secondary-button{{/if}}" style="flex-weight: 1; anchor-height: 38;">All</button>
+                                    <div class="spacer-h-sm"></div>
+                                    <button id="first-cmd-mode-random" class="{{#if cmdModeRandom}}secondary-button{{else}}secondary-button{{/if}}" style="flex-weight: 1; anchor-height: 38;">Random</button>
+                                </div>
+                                <div class="spacer-sm"></div>
+                                <button id="edit-first-commands-btn" class="secondary-button" style="anchor-width: 260; anchor-height: 40;">Edit First Commands</button>
+                            </div>
+
+                            <div class="spacer-md"></div>
+
+                            <div class="section">
+                                {{@sectionHeader:title=First Messages ({{$firstMessageCount}})}}
+                                <p class="form-hint" style="text-align: center;">Current mode: {{$currentMessageMode}}</p>
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <button id="first-msg-mode-all" class="{{#if msgModeAll}}secondary-button{{else}}secondary-button{{/if}}" style="flex-weight: 1; anchor-height: 38;">All</button>
+                                    <div class="spacer-h-sm"></div>
+                                    <button id="first-msg-mode-random" class="{{#if msgModeRandom}}secondary-button{{else}}secondary-button{{/if}}" style="flex-weight: 1; anchor-height: 38;">Random</button>
+                                </div>
+                                <div class="spacer-sm"></div>
+                                <button id="edit-first-messages-btn" class="secondary-button" style="anchor-width: 260; anchor-height: 40;">Edit First Messages</button>
+                            </div>
+
+                            <div class="spacer-md"></div>
+
+                            <div class="section">
+                                {{@sectionHeader:title=Completion Tracking}}
+                                <p class="form-hint" style="text-align: center;">Players completed first interaction: {{$completedCount}}</p>
+                                <div class="spacer-xs"></div>
+                                <button id="reset-first-completed-btn" class="secondary-button" style="anchor-width: 320; anchor-height: 40;">Reset Completed Player List</button>
+                            </div>
+                        </div>
+                        <div class="footer">
+                            <button id="back-btn" class="secondary-button">Back</button>
+                        </div>
+                    </div>
+                </div>
+                """);
+
+        PageBuilder page = PageBuilder.pageForPlayer(playerRef)
+                .withLifetime(CustomPageLifetime.CanDismiss)
+                .fromHtml(html);
+
+        page.addEventListener("toggle-first-enabled", CustomUIEventBindingType.Activating, event -> {
+            citizen.setFirstInteractionEnabled(!citizen.isFirstInteractionEnabled());
+            plugin.getCitizensManager().saveCitizen(citizen);
+            openFirstInteractionConfigGUI(playerRef, store, citizen);
+        });
+
+        page.addEventListener("toggle-run-normal-first-btn", CustomUIEventBindingType.Activating, event -> {
+            citizen.setRunNormalOnFirstInteraction(!citizen.isRunNormalOnFirstInteraction());
+            plugin.getCitizensManager().saveCitizen(citizen);
+            openFirstInteractionConfigGUI(playerRef, store, citizen);
+        });
+
+        page.addEventListener("first-cmd-mode-all", CustomUIEventBindingType.Activating, event -> {
+            citizen.setFirstInteractionCommandSelectionMode("ALL");
+            plugin.getCitizensManager().saveCitizen(citizen);
+            openFirstInteractionConfigGUI(playerRef, store, citizen);
+        });
+        page.addEventListener("first-cmd-mode-random", CustomUIEventBindingType.Activating, event -> {
+            citizen.setFirstInteractionCommandSelectionMode("RANDOM");
+            plugin.getCitizensManager().saveCitizen(citizen);
+            openFirstInteractionConfigGUI(playerRef, store, citizen);
+        });
+
+        page.addEventListener("first-msg-mode-all", CustomUIEventBindingType.Activating, event -> {
+            MessagesConfig cfg = citizen.getFirstInteractionMessagesConfig();
+            citizen.setFirstInteractionMessagesConfig(new MessagesConfig(cfg.getMessages(), "ALL", cfg.isEnabled()));
+            plugin.getCitizensManager().saveCitizen(citizen);
+            openFirstInteractionConfigGUI(playerRef, store, citizen);
+        });
+        page.addEventListener("first-msg-mode-random", CustomUIEventBindingType.Activating, event -> {
+            MessagesConfig cfg = citizen.getFirstInteractionMessagesConfig();
+            citizen.setFirstInteractionMessagesConfig(new MessagesConfig(cfg.getMessages(), "RANDOM", cfg.isEnabled()));
+            plugin.getCitizensManager().saveCitizen(citizen);
+            openFirstInteractionConfigGUI(playerRef, store, citizen);
+        });
+
+        page.addEventListener("edit-first-commands-btn", CustomUIEventBindingType.Activating, event ->
+                openFirstInteractionCommandsGUI(playerRef, store, citizen));
+        page.addEventListener("edit-first-messages-btn", CustomUIEventBindingType.Activating, event ->
+                openFirstInteractionMessagesGUI(playerRef, store, citizen));
+        page.addEventListener("reset-first-completed-btn", CustomUIEventBindingType.Activating, event -> {
+            citizen.setPlayersWhoCompletedFirstInteraction(Collections.emptySet());
+            plugin.getCitizensManager().saveCitizen(citizen);
+            playerRef.sendMessage(Message.raw("First interaction completion list reset.").color(Color.GREEN));
+            openFirstInteractionConfigGUI(playerRef, store, citizen);
+        });
+        page.addEventListener("back-btn", CustomUIEventBindingType.Activating, event ->
+                openEditCitizenGUI(playerRef, store, citizen));
+
+        page.open(store);
+    }
+
+    public void openFirstInteractionCommandsGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store,
+                                                @Nonnull CitizenData citizen) {
+        List<CommandAction> actions = new ArrayList<>(citizen.getFirstInteractionCommandActions());
+        List<IndexedCommandAction> indexedActions = new ArrayList<>();
+        for (int i = 0; i < actions.size(); i++) {
+            indexedActions.add(new IndexedCommandAction(i, actions.get(i)));
+        }
+
+        String commandMode = "ALL".equalsIgnoreCase(citizen.getFirstInteractionCommandSelectionMode()) ? "ALL" : "RANDOM";
+        if (!commandMode.equalsIgnoreCase(citizen.getFirstInteractionCommandSelectionMode())) {
+            citizen.setFirstInteractionCommandSelectionMode(commandMode);
+            plugin.getCitizensManager().saveCitizen(citizen);
+        }
+        TemplateProcessor template = createBaseTemplate()
+                .setVariable("actions", indexedActions)
+                .setVariable("hasActions", !actions.isEmpty())
+                .setVariable("actionCount", actions.size())
+                .setVariable("modeAll", "ALL".equalsIgnoreCase(commandMode))
+                .setVariable("modeRandom", "RANDOM".equalsIgnoreCase(commandMode))
+                .setVariable("currentMode", commandMode);
+
+        String html = template.process(getSharedStyles() + """
+                <div class="page-overlay">
+                    <div class="main-container decorated-container" style="anchor-width: 900; anchor-height: 900;">
+                        <div class="header container-title">
+                            <div class="header-content">
+                                <p class="header-title">First Interaction Commands</p>
+                            </div>
+                        </div>
+                        <div class="body">
+                            <p class="page-description">Commands that only run on a player's first interaction ({{$actionCount}} commands)</p>
+                            <div class="spacer-sm"></div>
+                            <div class="section">
+                                <button id="add-command-btn" class="secondary-button" style="anchor-width: 220; anchor-height: 38;">Add Command</button>
+                                <div class="spacer-sm"></div>
+                                <p class="form-hint">Variables: {PlayerName}, {CitizenName}, {NpcX}, {NpcY}, {NpcZ}</p>
+                            </div>
+                            <div class="spacer-md"></div>
+                            <div class="section">
+                                {{@sectionHeader:title=Selection Mode}}
+                                <p class="form-hint" style="text-align: center;">Current mode: {{$currentMode}}</p>
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <button id="mode-all" class="{{#if modeAll}}secondary-button{{else}}secondary-button{{/if}}" style="flex-weight: 1; anchor-height: 38;">All</button>
+                                    <div class="spacer-h-sm"></div>
+                                    <button id="mode-random" class="{{#if modeRandom}}secondary-button{{else}}secondary-button{{/if}}" style="flex-weight: 1; anchor-height: 38;">Random</button>
+                                </div>
+                            </div>
+                            <div class="spacer-md"></div>
+                            {{#if hasActions}}
+                            <div class="list-container" data-hyui-scrollbar-style='"Common.ui" "DefaultScrollbarStyle"' style="anchor-height: 340;">
+                                {{#each actions}}
+                                <div class="command-item">
+                                    <div class="command-icon {{#if runAsServer}}command-icon-server{{else}}command-icon-player{{/if}}">
+                                        <p class="command-icon-text {{#if runAsServer}}command-icon-text-server{{else}}command-icon-text-player{{/if}}">{{#if runAsServer}}S{{else}}P{{/if}}</p>
+                                    </div>
+                                    <div class="command-content">
+                                        <p class="command-text">/{{$command}}</p>
+                                        <p class="command-type">{{$triggerLabel}}{{#if hasDelay}} | Delay: {{$delaySeconds}}s{{/if}}{{#if hasChanceModifier}} | Chance: {{$chancePercent}}%{{/if}}</p>
+                                    </div>
+                                    <div class="command-actions">
+                                        <button id="edit-cmd-{{$index}}" class="secondary-button small-secondary-button">Edit</button>
+                                        <div class="spacer-h-sm"></div>
+                                        <button id="delete-cmd-{{$index}}" class="secondary-button small-secondary-button">Delete</button>
+                                    </div>
+                                </div>
+                                <div class="spacer-sm"></div>
+                                {{/each}}
+                            </div>
+                            {{else}}
+                            <div class="empty-state">
+                                <div class="empty-state-content">
+                                    <p class="empty-state-title">No First Commands</p>
+                                    <p class="empty-state-description">Add one or more commands for first-time interactions.</p>
+                                </div>
+                            </div>
+                            {{/if}}
+                        </div>
+                        <div class="footer">
+                            <button id="back-btn" class="secondary-button">Back</button>
+                            <div class="spacer-h-md"></div>
+                            <button id="done-btn" class="secondary-button">Done</button>
+                        </div>
+                    </div>
+                </div>
+                """);
+
+        PageBuilder page = PageBuilder.pageForPlayer(playerRef)
+                .withLifetime(CustomPageLifetime.CanDismiss)
+                .fromHtml(html);
+
+        page.addEventListener("mode-all", CustomUIEventBindingType.Activating, event -> {
+            citizen.setFirstInteractionCommandSelectionMode("ALL");
+            plugin.getCitizensManager().saveCitizen(citizen);
+            openFirstInteractionCommandsGUI(playerRef, store, citizen);
+        });
+        page.addEventListener("mode-random", CustomUIEventBindingType.Activating, event -> {
+            citizen.setFirstInteractionCommandSelectionMode("RANDOM");
+            plugin.getCitizensManager().saveCitizen(citizen);
+            openFirstInteractionCommandsGUI(playerRef, store, citizen);
+        });
+        page.addEventListener("add-command-btn", CustomUIEventBindingType.Activating, event -> {
+            openEditFirstInteractionCommandGUI(playerRef, store, citizen, actions,
+                    new CommandAction("", false, 0.0f, "BOTH", 100.0f), -1);
+        });
+
+        for (int i = 0; i < actions.size(); i++) {
+            final int index = i;
+            page.addEventListener("edit-cmd-" + i, CustomUIEventBindingType.Activating, event -> {
+                openEditFirstInteractionCommandGUI(playerRef, store, citizen, actions, actions.get(index), index);
+            });
+            page.addEventListener("delete-cmd-" + i, CustomUIEventBindingType.Activating, event -> {
+                actions.remove(index);
+                citizen.setFirstInteractionCommandActions(actions);
+                plugin.getCitizensManager().saveCitizen(citizen);
+                openFirstInteractionCommandsGUI(playerRef, store, citizen);
+            });
+        }
+
+        page.addEventListener("done-btn", CustomUIEventBindingType.Activating, event -> {
+            citizen.setFirstInteractionCommandActions(actions);
+            plugin.getCitizensManager().saveCitizen(citizen);
+            openFirstInteractionConfigGUI(playerRef, store, citizen);
+        });
+        page.addEventListener("back-btn", CustomUIEventBindingType.Activating, event ->
+                openFirstInteractionConfigGUI(playerRef, store, citizen));
+
+        page.open(store);
+    }
+
+    public void openEditFirstInteractionCommandGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store,
+                                                   @Nonnull CitizenData citizen, @Nonnull List<CommandAction> actions,
+                                                   @Nonnull CommandAction command, int editIndex) {
+        boolean isNew = (editIndex == -1);
+        String currentTrigger = command.getInteractionTrigger() != null ? command.getInteractionTrigger() : "BOTH";
+
+        TemplateProcessor template = createBaseTemplate()
+                .setVariable("command", escapeHtml(command.getCommand()))
+                .setVariable("runAsServer", command.isRunAsServer())
+                .setVariable("delaySeconds", command.getDelaySeconds())
+                .setVariable("chancePercent", command.getChancePercent())
+                .setVariable("isNew", isNew)
+                .setVariable("isLeftClick", "LEFT_CLICK".equals(currentTrigger))
+                .setVariable("isFKey", "F_KEY".equals(currentTrigger))
+                .setVariable("isBoth", "BOTH".equals(currentTrigger));
+
+        String html = template.process(getSharedStyles() + """
+                <div class="page-overlay">
+                    <div class="main-container decorated-container" style="anchor-width: 680; anchor-height: 780;">
+                        <div class="header container-title">
+                            <div class="header-content">
+                                <p class="header-title">{{#if isNew}}Add First Command{{else}}Edit First Command{{/if}}</p>
+                            </div>
+                        </div>
+                        <div class="body">
+                            <p class="page-description">Configure a command that only runs on first interaction</p>
+                            <div class="spacer-sm"></div>
+                            <div class="section">
+                                {{@sectionHeader:title=Command}}
+                                <input type="text" id="command-input" class="form-input" value="{{$command}}" placeholder="give {PlayerName} Rock_Gem_Diamond" />
+                                <p class="form-hint">Variables: {PlayerName}, {CitizenName}, {NpcX}, {NpcY}, {NpcZ}</p>
+                            </div>
+                            <div class="spacer-md"></div>
+                            <div class="section">
+                                {{@sectionHeader:title=Interaction Trigger}}
+                                <div class="form-row">
+                                    <button id="trigger-left-click" class="{{#if isLeftClick}}secondary-button{{else}}secondary-button{{/if}}" style="flex-weight: 1; anchor-height: 38;">Left Click</button>
+                                    <div class="spacer-h-sm"></div>
+                                    <button id="trigger-f-key" class="{{#if isFKey}}secondary-button{{else}}secondary-button{{/if}}" style="flex-weight: 1; anchor-height: 38;">F Key</button>
+                                    <div class="spacer-h-sm"></div>
+                                    <button id="trigger-both" class="{{#if isBoth}}secondary-button{{else}}secondary-button{{/if}}" style="flex-weight: 1; anchor-height: 38;">Both</button>
+                                </div>
+                            </div>
+                            <div class="spacer-md"></div>
+                            <div class="section">
+                                {{@sectionHeader:title=Delay}}
+                                {{@numberField:id=delay-seconds,label=Delay Before Command (seconds),value={{$delaySeconds}},placeholder=0,min=0,max=300,step=0.5,decimals=1}}
+                            </div>
+                            <div class="spacer-md"></div>
+                            <div class="section">
+                                {{@sectionHeader:title=Chance}}
+                                {{@numberField:id=chance-percent,label=Chance %,value={{$chancePercent}},placeholder=100,min=0,max=100,step=1,decimals=1}}
+                            </div>
+                            <div class="spacer-md"></div>
+                            <div class="section">
+                                <div class="checkbox-row">
+                                    <input type="checkbox" id="run-as-server" {{#if runAsServer}}checked{{/if}} />
+                                    <div style="layout: top; flex-weight: 0;">
+                                        <p class="checkbox-label">Run as Server</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="footer">
+                            <button id="cancel-btn" class="secondary-button">Cancel</button>
+                            <div class="spacer-h-md"></div>
+                            <button id="save-btn" class="secondary-button" style="anchor-width: 200;">{{#if isNew}}Add Command{{else}}Save Changes{{/if}}</button>
+                        </div>
+                    </div>
+                </div>
+                """);
+
+        PageBuilder page = PageBuilder.pageForPlayer(playerRef)
+                .withLifetime(CustomPageLifetime.CanDismiss)
+                .fromHtml(html);
+
+        final String[] commandText = {command.getCommand()};
+        final boolean[] runAsServer = {command.isRunAsServer()};
+        final float[] delaySeconds = {command.getDelaySeconds()};
+        final float[] chancePercent = {command.getChancePercent()};
+        final String[] interactionTrigger = {currentTrigger};
+
+        page.addEventListener("command-input", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            commandText[0] = ctx.getValue("command-input", String.class).orElse("");
+        });
+        page.addEventListener("trigger-left-click", CustomUIEventBindingType.Activating, event ->
+                openEditFirstInteractionCommandGUI(playerRef, store, citizen, actions,
+                        new CommandAction(commandText[0], runAsServer[0], delaySeconds[0], "LEFT_CLICK", chancePercent[0]), editIndex));
+        page.addEventListener("trigger-f-key", CustomUIEventBindingType.Activating, event ->
+                openEditFirstInteractionCommandGUI(playerRef, store, citizen, actions,
+                        new CommandAction(commandText[0], runAsServer[0], delaySeconds[0], "F_KEY", chancePercent[0]), editIndex));
+        page.addEventListener("trigger-both", CustomUIEventBindingType.Activating, event ->
+                openEditFirstInteractionCommandGUI(playerRef, store, citizen, actions,
+                        new CommandAction(commandText[0], runAsServer[0], delaySeconds[0], "BOTH", chancePercent[0]), editIndex));
+        page.addEventListener("delay-seconds", CustomUIEventBindingType.ValueChanged, (event, ctx) ->
+                ctx.getValue("delay-seconds", Double.class).ifPresent(v -> delaySeconds[0] = v.floatValue()));
+        page.addEventListener("chance-percent", CustomUIEventBindingType.ValueChanged, (event, ctx) ->
+                ctx.getValue("chance-percent", Double.class).ifPresent(v -> chancePercent[0] = Math.max(0.0f, Math.min(100.0f, v.floatValue()))));
+        page.addEventListener("run-as-server", CustomUIEventBindingType.ValueChanged, (event, ctx) ->
+                runAsServer[0] = ctx.getValue("run-as-server", Boolean.class).orElse(false));
+
+        page.addEventListener("save-btn", CustomUIEventBindingType.Activating, event -> {
+            String cmd = commandText[0].trim();
+            if (cmd.isEmpty()) {
+                playerRef.sendMessage(Message.raw("Command cannot be empty!").color(Color.RED));
+                return;
+            }
+            if (cmd.startsWith("/")) {
+                cmd = cmd.substring(1);
+            }
+
+            CommandAction saved = new CommandAction(cmd, runAsServer[0], delaySeconds[0], interactionTrigger[0], chancePercent[0]);
+            if (isNew) {
+                actions.add(saved);
+            } else {
+                actions.set(editIndex, saved);
+            }
+
+            citizen.setFirstInteractionCommandActions(actions);
+            plugin.getCitizensManager().saveCitizen(citizen);
+            openFirstInteractionCommandsGUI(playerRef, store, citizen);
+        });
+
+        page.addEventListener("cancel-btn", CustomUIEventBindingType.Activating, event ->
+                openFirstInteractionCommandsGUI(playerRef, store, citizen));
+
+        page.open(store);
+    }
+
+    public void openFirstInteractionMessagesGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store,
+                                                @Nonnull CitizenData citizen) {
+        MessagesConfig loadedConfig = citizen.getFirstInteractionMessagesConfig();
+        String effectiveMode = "ALL".equalsIgnoreCase(loadedConfig.getSelectionMode()) ? "ALL" : "RANDOM";
+        if (!effectiveMode.equalsIgnoreCase(loadedConfig.getSelectionMode())) {
+            loadedConfig = new MessagesConfig(loadedConfig.getMessages(), effectiveMode, loadedConfig.isEnabled());
+            citizen.setFirstInteractionMessagesConfig(loadedConfig);
+            plugin.getCitizensManager().saveCitizen(citizen);
+        }
+        final MessagesConfig currentConfig = loadedConfig;
+        List<CitizenMessage> messages = new ArrayList<>(currentConfig.getMessages());
+        List<IndexedMessage> indexed = new ArrayList<>();
+        for (int i = 0; i < messages.size(); i++) {
+            indexed.add(new IndexedMessage(i, messages.get(i)));
+        }
+
+        TemplateProcessor template = createBaseTemplate()
+                .setVariable("messages", indexed)
+                .setVariable("hasMessages", !messages.isEmpty())
+                .setVariable("messageCount", messages.size())
+                .setVariable("currentMode", effectiveMode)
+                .setVariable("isAll", "ALL".equalsIgnoreCase(effectiveMode))
+                .setVariable("isRandom", "RANDOM".equalsIgnoreCase(effectiveMode));
+
+        String html = template.process(getSharedStyles() + """
+                <div class="page-overlay">
+                    <div class="main-container decorated-container" style="anchor-width: 900; anchor-height: 780;">
+                        <div class="header container-title">
+                            <div class="header-content">
+                                <p class="header-title">First Interaction Messages</p>
+                            </div>
+                        </div>
+                        <div class="body">
+                            <p class="page-description">Messages that only run on a player's first interaction ({{$messageCount}} messages)</p>
+                            <div class="spacer-sm"></div>
+                            <button id="add-message-btn" class="secondary-button" style="anchor-width: 220; anchor-height: 38;">Add Message</button>
+                            <div class="spacer-sm"></div>
+                            <p class="form-hint">Supports {RED}/{#HEX}, **bold**, *italic*, [label](https://example.com), {PlayerName}, {CitizenName}, {NpcX}, {NpcY}, {NpcZ}</p>
+                            <div class="spacer-md"></div>
+                            <p class="form-hint" style="text-align: center;">Current mode: {{$currentMode}}</p>
+                            <div class="spacer-xs"></div>
+                            <div class="form-row">
+                                <button id="mode-all" class="{{#if isAll}}secondary-button{{else}}secondary-button{{/if}}" style="flex-weight: 1; anchor-height: 38;">All</button>
+                                <div class="spacer-h-sm"></div>
+                                <button id="mode-random" class="{{#if isRandom}}secondary-button{{else}}secondary-button{{/if}}" style="flex-weight: 1; anchor-height: 38;">Random</button>
+                            </div>
+                            <div class="spacer-md"></div>
+                            {{#if hasMessages}}
+                            <div class="list-container" data-hyui-scrollbar-style='"Common.ui" "DefaultScrollbarStyle"' style="anchor-height: 360;">
+                                {{#each messages}}
+                                <div class="command-item">
+                                    <div class="command-icon command-icon-player">
+                                        <p class="command-icon-text command-icon-text-player" style="font-size: 8;">M</p>
+                                    </div>
+                                    <div class="command-content">
+                                        <p class="command-text">{{$truncated}}</p>
+                                        <p class="command-type">{{$triggerLabel}}{{#if hasDelay}} | Delay: {{$delaySeconds}}s{{/if}}{{#if hasChanceModifier}} | Chance: {{$chancePercent}}%{{/if}}</p>
+                                    </div>
+                                    <div class="command-actions">
+                                        <button id="edit-msg-{{$index}}" class="secondary-button small-secondary-button">Edit</button>
+                                        <div class="spacer-h-sm"></div>
+                                        <button id="delete-msg-{{$index}}" class="secondary-button small-secondary-button">Delete</button>
+                                    </div>
+                                </div>
+                                <div class="spacer-sm"></div>
+                                {{/each}}
+                            </div>
+                            {{else}}
+                            <div class="empty-state">
+                                <div class="empty-state-content">
+                                    <p class="empty-state-title">No First Messages</p>
+                                    <p class="empty-state-description">Add one or more messages for first-time interactions.</p>
+                                </div>
+                            </div>
+                            {{/if}}
+                        </div>
+                        <div class="footer">
+                            <button id="back-btn" class="secondary-button">Back</button>
+                            <div class="spacer-h-md"></div>
+                            <button id="done-btn" class="secondary-button">Done</button>
+                        </div>
+                    </div>
+                </div>
+                """);
+
+        PageBuilder page = PageBuilder.pageForPlayer(playerRef)
+                .withLifetime(CustomPageLifetime.CanDismiss)
+                .fromHtml(html);
+
+        page.addEventListener("mode-all", CustomUIEventBindingType.Activating, event -> {
+            citizen.setFirstInteractionMessagesConfig(new MessagesConfig(messages, "ALL", currentConfig.isEnabled()));
+            plugin.getCitizensManager().saveCitizen(citizen);
+            openFirstInteractionMessagesGUI(playerRef, store, citizen);
+        });
+        page.addEventListener("mode-random", CustomUIEventBindingType.Activating, event -> {
+            citizen.setFirstInteractionMessagesConfig(new MessagesConfig(messages, "RANDOM", currentConfig.isEnabled()));
+            plugin.getCitizensManager().saveCitizen(citizen);
+            openFirstInteractionMessagesGUI(playerRef, store, citizen);
+        });
+        page.addEventListener("add-message-btn", CustomUIEventBindingType.Activating, event -> {
+            openEditFirstInteractionMessageGUI(playerRef, store, citizen, messages,
+                    new CitizenMessage("", "BOTH", 0.0f, 100.0f), -1);
+        });
+
+        for (int i = 0; i < messages.size(); i++) {
+            final int index = i;
+            page.addEventListener("edit-msg-" + i, CustomUIEventBindingType.Activating, event ->
+                    openEditFirstInteractionMessageGUI(playerRef, store, citizen, messages, messages.get(index), index));
+            page.addEventListener("delete-msg-" + i, CustomUIEventBindingType.Activating, event -> {
+                messages.remove(index);
+                citizen.setFirstInteractionMessagesConfig(new MessagesConfig(messages, effectiveMode, currentConfig.isEnabled()));
+                plugin.getCitizensManager().saveCitizen(citizen);
+                openFirstInteractionMessagesGUI(playerRef, store, citizen);
+            });
+        }
+
+        page.addEventListener("done-btn", CustomUIEventBindingType.Activating, event -> {
+            citizen.setFirstInteractionMessagesConfig(new MessagesConfig(messages, effectiveMode, currentConfig.isEnabled()));
+            plugin.getCitizensManager().saveCitizen(citizen);
+            openFirstInteractionConfigGUI(playerRef, store, citizen);
+        });
+        page.addEventListener("back-btn", CustomUIEventBindingType.Activating, event ->
+                openFirstInteractionConfigGUI(playerRef, store, citizen));
+
+        page.open(store);
+    }
+
+    public void openEditFirstInteractionMessageGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store,
+                                                   @Nonnull CitizenData citizen, @Nonnull List<CitizenMessage> messages,
+                                                   @Nonnull CitizenMessage message, int editIndex) {
+        boolean isNew = (editIndex == -1);
+        String currentTrigger = message.getInteractionTrigger() != null ? message.getInteractionTrigger() : "BOTH";
+
+        TemplateProcessor template = createBaseTemplate()
+                .setVariable("message", escapeHtml(message.getMessage()))
+                .setVariable("delaySeconds", message.getDelaySeconds())
+                .setVariable("chancePercent", message.getChancePercent())
+                .setVariable("isNew", isNew)
+                .setVariable("isLeftClick", "LEFT_CLICK".equals(currentTrigger))
+                .setVariable("isFKey", "F_KEY".equals(currentTrigger))
+                .setVariable("isBoth", "BOTH".equals(currentTrigger));
+
+        String html = template.process(getSharedStyles() + """
+                <div class="page-overlay">
+                    <div class="main-container decorated-container" style="anchor-width: 680; anchor-height: 700;">
+                        <div class="header container-title">
+                            <div class="header-content">
+                                <p class="header-title">{{#if isNew}}Add First Message{{else}}Edit First Message{{/if}}</p>
+                            </div>
+                        </div>
+                        <div class="body">
+                            <p class="page-description">Configure a message that only runs on first interaction</p>
+                            <div class="spacer-sm"></div>
+                            <div class="section">
+                                {{@sectionHeader:title=Message Text}}
+                                <input type="text" id="message-input" class="form-input" value="{{$message}}" placeholder="Enter message..." />
+                                <p class="form-hint">Colors: {COLOR}, {RED}, {BLUE}, {#HEX}, {#FFA500}, etc.</p>
+                                <div class="spacer-xs"></div>
+                                <p class="form-hint">Rich text: **bold**, *italic*, [label](https://example.com).</p>
+                                <div class="spacer-xs"></div>
+                                <p class="form-hint">Colors: Variables: {PlayerName}, {CitizenName}, {NpcX}, {NpcY}, {NpcZ}.</p>
+                            </div>
+                            <div class="spacer-md"></div>
+                            <div class="section">
+                                {{@sectionHeader:title=Interaction Trigger}}
+                                <div class="form-row">
+                                    <button id="trigger-left-click" class="{{#if isLeftClick}}secondary-button{{else}}secondary-button{{/if}}" style="flex-weight: 1; anchor-height: 38;">Left Click</button>
+                                    <div class="spacer-h-sm"></div>
+                                    <button id="trigger-f-key" class="{{#if isFKey}}secondary-button{{else}}secondary-button{{/if}}" style="flex-weight: 1; anchor-height: 38;">F Key</button>
+                                    <div class="spacer-h-sm"></div>
+                                    <button id="trigger-both" class="{{#if isBoth}}secondary-button{{else}}secondary-button{{/if}}" style="flex-weight: 1; anchor-height: 38;">Both</button>
+                                </div>
+                            </div>
+                            <div class="spacer-md"></div>
+                            <div class="section">
+                                {{@sectionHeader:title=Delay}}
+                                {{@numberField:id=delay-seconds,label=Delay Before Message (seconds),value={{$delaySeconds}},placeholder=0,min=0,max=60,step=0.5,decimals=1}}
+                            </div>
+                            <div class="spacer-md"></div>
+                            <div class="section">
+                                {{@sectionHeader:title=Chance}}
+                                {{@numberField:id=chance-percent,label=Chance %,value={{$chancePercent}},placeholder=100,min=0,max=100,step=1,decimals=1}}
+                            </div>
+                        </div>
+                        <div class="footer">
+                            <button id="cancel-btn" class="secondary-button">Cancel</button>
+                            <div class="spacer-h-md"></div>
+                            <button id="save-btn" class="secondary-button" style="anchor-width: 200;">{{#if isNew}}Add Message{{else}}Save Changes{{/if}}</button>
+                        </div>
+                    </div>
+                </div>
+                """);
+
+        PageBuilder page = PageBuilder.pageForPlayer(playerRef)
+                .withLifetime(CustomPageLifetime.CanDismiss)
+                .fromHtml(html);
+
+        final String[] messageText = {message.getMessage()};
+        final float[] delaySeconds = {message.getDelaySeconds()};
+        final float[] chancePercent = {message.getChancePercent()};
+        final String[] interactionTrigger = {currentTrigger};
+
+        page.addEventListener("message-input", CustomUIEventBindingType.ValueChanged, (event, ctx) ->
+                messageText[0] = ctx.getValue("message-input", String.class).orElse(""));
+        page.addEventListener("trigger-left-click", CustomUIEventBindingType.Activating, event ->
+                openEditFirstInteractionMessageGUI(playerRef, store, citizen, messages,
+                        new CitizenMessage(messageText[0], "LEFT_CLICK", delaySeconds[0], chancePercent[0]), editIndex));
+        page.addEventListener("trigger-f-key", CustomUIEventBindingType.Activating, event ->
+                openEditFirstInteractionMessageGUI(playerRef, store, citizen, messages,
+                        new CitizenMessage(messageText[0], "F_KEY", delaySeconds[0], chancePercent[0]), editIndex));
+        page.addEventListener("trigger-both", CustomUIEventBindingType.Activating, event ->
+                openEditFirstInteractionMessageGUI(playerRef, store, citizen, messages,
+                        new CitizenMessage(messageText[0], "BOTH", delaySeconds[0], chancePercent[0]), editIndex));
+        page.addEventListener("delay-seconds", CustomUIEventBindingType.ValueChanged, (event, ctx) ->
+                ctx.getValue("delay-seconds", Double.class).ifPresent(v -> delaySeconds[0] = v.floatValue()));
+        page.addEventListener("chance-percent", CustomUIEventBindingType.ValueChanged, (event, ctx) ->
+                ctx.getValue("chance-percent", Double.class).ifPresent(v -> chancePercent[0] = Math.max(0.0f, Math.min(100.0f, v.floatValue()))));
+
+        page.addEventListener("save-btn", CustomUIEventBindingType.Activating, event -> {
+            String text = messageText[0].trim();
+            if (text.isEmpty()) {
+                playerRef.sendMessage(Message.raw("Message cannot be empty!").color(Color.RED));
+                return;
+            }
+
+            CitizenMessage saved = new CitizenMessage(text, interactionTrigger[0], delaySeconds[0], chancePercent[0]);
+            if (isNew) {
+                messages.add(saved);
+            } else {
+                messages.set(editIndex, saved);
+            }
+
+            MessagesConfig cfg = citizen.getFirstInteractionMessagesConfig();
+            citizen.setFirstInteractionMessagesConfig(new MessagesConfig(messages, cfg.getSelectionMode(), cfg.isEnabled()));
+            plugin.getCitizensManager().saveCitizen(citizen);
+            openFirstInteractionMessagesGUI(playerRef, store, citizen);
+        });
+
+        page.addEventListener("cancel-btn", CustomUIEventBindingType.Activating, event ->
+                openFirstInteractionMessagesGUI(playerRef, store, citizen));
 
         page.open(store);
     }
@@ -4366,7 +5657,13 @@ public class CitizensUI {
                             <!-- Back Off & Blocking -->
                             <div class="section">
                                 {{@sectionHeader:title=Back Off & Blocking,description=Retreat and blocking behavior}}
-                                {{@checkbox:id=back-off-toggle,label=Back Off After Attack,checked={{$backOffAfterAttack}},description=NPC retreats after attacking}}
+                                <div class="checkbox-row">
+                                    <input type="checkbox" id="back-off-toggle" {{#if backOffAfterAttack}}checked{{/if}} />
+                                    <div style="layout: top; flex-weight: 0;">
+                                        <p class="checkbox-label">Back Off After Attack</p>
+                                        <p class="checkbox-description">NPC retreats after attacking</p>
+                                    </div>
+                                </div>
                                 <div class="spacer-xs"></div>
                                 <div class="form-row">
                                     <div style="flex-weight: 1;">
@@ -4408,7 +5705,13 @@ public class CitizensUI {
                                     </div>
                                 </div>
                                 <div class="spacer-xs"></div>
-                                {{@checkbox:id=use-combat-evaluator,label=Use Combat Action Evaluator,checked={{$useCombatActionEvaluator}},description=Enable advanced combat action evaluation}}
+                                <div class="checkbox-row">
+                                    <input type="checkbox" id="use-combat-evaluator" {{#if useCombatActionEvaluator}}checked{{/if}} />
+                                    <div style="layout: top; flex-weight: 0;">
+                                        <p class="checkbox-label">Use Combat Action Evaluator</p>
+                                        <p class="checkbox-description">Enable advanced combat action evaluation</p>
+                                    </div>
+                                </div>
                             </div>
 
                         </div>
@@ -4583,7 +5886,11 @@ public class CitizensUI {
         });
 
         // Save
-        page.addEventListener("save-btn", CustomUIEventBindingType.Activating, event -> {
+        page.addEventListener("save-btn", CustomUIEventBindingType.Activating, (event, ctx) -> {
+            // Ensure latest checkbox states are captured at save time.
+            ctx.getValue("back-off-toggle", Boolean.class).ifPresent(v -> backOffAfterAttack[0] = v);
+            ctx.getValue("use-combat-evaluator", Boolean.class).ifPresent(v -> useCombatEvaluator[0] = v);
+
             cc.setAttackType(attackType[0]);
             cc.setAttackDistance(attackDistance[0]);
             cc.setChaseSpeed(chaseSpeed[0]);
@@ -4873,6 +6180,11 @@ public class CitizensUI {
                 .setVariable("defaultOffHandSlot", citizen.getDefaultOffHandSlot())
                 .setVariable("nighttimeOffhandSlot", citizen.getNighttimeOffhandSlot())
                 .setVariable("knockbackScale", citizen.getKnockbackScale())
+                .setVariable("leashDistance", citizen.getLeashDistance())
+                .setVariable("leashMinPlayerDistance", citizen.getLeashMinPlayerDistance())
+                .setVariable("leashTimerMin", citizen.getLeashTimerMin())
+                .setVariable("leashTimerMax", citizen.getLeashTimerMax())
+                .setVariable("hardLeashDistance", citizen.getHardLeashDistance())
 //                .setVariable("weapons", escapeHtml(String.join(", ", citizen.getWeapons())))
 //                .setVariable("offHandItems", escapeHtml(String.join(", ", citizen.getOffHandItems())))
                 .setVariable("combatMessageTargetGroups", escapeHtml(String.join(", ", citizen.getCombatMessageTargetGroups())))
@@ -4928,7 +6240,13 @@ public class CitizensUI {
                                     </div>
                                 </div>
                                 <div class="spacer-xs"></div>
-                                {{@checkbox:id=breathes-in-water,label=Breathes In Water,checked={{$breathesInWater}},description=Whether this NPC can breathe underwater}}
+                                <div class="checkbox-row">
+                                    <input type="checkbox" id="breathes-in-water" {{#if breathesInWater}}checked{{/if}} />
+                                    <div style="layout: top; flex-weight: 0;">
+                                        <p class="checkbox-label">Breathes In Water</p>
+                                        <p class="checkbox-description">Whether this NPC can breathe underwater</p>
+                                    </div>
+                                </div>
                             </div>
 
                             <div class="spacer-md"></div>
@@ -4997,6 +6315,33 @@ public class CitizensUI {
 
                             <div class="spacer-md"></div>
 
+                            <div class="section">
+                                {{@sectionHeader:title=Leash Settings,description=Control distance and leash timing behavior}}
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=leash-distance,label=Leash Distance,value={{$leashDistance}},placeholder=45,min=1,max=1000,step=1,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=leash-min-player-distance,label=Leash Min Player Distance,value={{$leashMinPlayerDistance}},placeholder=4,min=0,max=500,step=0.5,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=hard-leash-distance,label=Hard Leash Distance,value={{$hardLeashDistance}},placeholder=200,min=1,max=5000,step=1,decimals=1}}
+                                    </div>
+                                </div>
+                                <div class="spacer-xs"></div>
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=leash-timer-min,label=Leash Timer Min,value={{$leashTimerMin}},placeholder=3,min=0,max=600,step=0.5,decimals=1}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=leash-timer-max,label=Leash Timer Max,value={{$leashTimerMax}},placeholder=5,min=0,max=600,step=0.5,decimals=1}}
+                                    </div>
+                                </div>
+                            </div>
+
                             <!-- Groups & Arrays -->
                             <div class="section">
                                 {{@sectionHeader:title=Groups & Arrays,description=Comma-separated lists for group memberships}}
@@ -5046,6 +6391,11 @@ public class CitizensUI {
         final int[] defaultOffHand = {citizen.getDefaultOffHandSlot()};
         final int[] nighttimeOffhand = {citizen.getNighttimeOffhandSlot()};
         final float[] knockbackScale = {citizen.getKnockbackScale()};
+        final float[] leashDistance = {citizen.getLeashDistance()};
+        final float[] leashMinPlayerDistance = {citizen.getLeashMinPlayerDistance()};
+        final float[] leashTimerMin = {citizen.getLeashTimerMin()};
+        final float[] leashTimerMax = {citizen.getLeashTimerMax()};
+        final float[] hardLeashDistance = {citizen.getHardLeashDistance()};
 //        final String[] weaponsStr = {String.join(", ", citizen.getWeapons())};
 //        final String[] offHandItemsStr = {String.join(", ", citizen.getOffHandItems())};
         final String[] combatMsgGroups = {String.join(", ", citizen.getCombatMessageTargetGroups())};
@@ -5113,6 +6463,21 @@ public class CitizensUI {
         page.addEventListener("knockback-scale", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
             ctx.getValue("knockback-scale", Double.class).ifPresent(v -> knockbackScale[0] = v.floatValue());
         });
+        page.addEventListener("leash-distance", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("leash-distance", Double.class).ifPresent(v -> leashDistance[0] = v.floatValue());
+        });
+        page.addEventListener("leash-min-player-distance", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("leash-min-player-distance", Double.class).ifPresent(v -> leashMinPlayerDistance[0] = v.floatValue());
+        });
+        page.addEventListener("leash-timer-min", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("leash-timer-min", Double.class).ifPresent(v -> leashTimerMin[0] = v.floatValue());
+        });
+        page.addEventListener("leash-timer-max", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("leash-timer-max", Double.class).ifPresent(v -> leashTimerMax[0] = v.floatValue());
+        });
+        page.addEventListener("hard-leash-distance", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("hard-leash-distance", Double.class).ifPresent(v -> hardLeashDistance[0] = v.floatValue());
+        });
 
         // Checkbox
         page.addEventListener("breathes-in-water", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
@@ -5120,7 +6485,10 @@ public class CitizensUI {
         });
 
         // Save
-        page.addEventListener("save-btn", CustomUIEventBindingType.Activating, event -> {
+        page.addEventListener("save-btn", CustomUIEventBindingType.Activating, (event, ctx) -> {
+            // Ensure latest checkbox state is captured at save time.
+            ctx.getValue("breathes-in-water", Boolean.class).ifPresent(v -> breathesInWater[0] = v);
+
             citizen.setDropList(dropList[0]);
             citizen.setRunThreshold(runThreshold[0]);
             citizen.setNameTranslationKey(nameTransKey[0]);
@@ -5137,6 +6505,11 @@ public class CitizensUI {
             citizen.setNighttimeOffhandSlot(nighttimeOffhand[0]);
 
             citizen.setKnockbackScale(knockbackScale[0]);
+            citizen.setLeashDistance(leashDistance[0]);
+            citizen.setLeashMinPlayerDistance(leashMinPlayerDistance[0]);
+            citizen.setLeashTimerMin(leashTimerMin[0]);
+            citizen.setLeashTimerMax(leashTimerMax[0]);
+            citizen.setHardLeashDistance(hardLeashDistance[0]);
 
             // Parse comma-separated lists
 //            citizen.setWeapons(parseCommaSeparatedList(weaponsStr[0]));
@@ -5169,6 +6542,44 @@ public class CitizensUI {
         return result;
     }
 
+    @Nonnull
+    private List<CommandAction> copyCommandActions(@Nonnull List<CommandAction> source) {
+        List<CommandAction> copy = new ArrayList<>(source.size());
+        for (CommandAction action : source) {
+            copy.add(new CommandAction(
+                    action.getCommand(),
+                    action.isRunAsServer(),
+                    action.getDelaySeconds(),
+                    action.getInteractionTrigger(),
+                    action.getChancePercent()
+            ));
+        }
+        return copy;
+    }
+
+    @Nonnull
+    private List<CitizenMessage> copyCitizenMessages(@Nonnull List<CitizenMessage> source) {
+        List<CitizenMessage> copy = new ArrayList<>(source.size());
+        for (CitizenMessage message : source) {
+            copy.add(new CitizenMessage(
+                    message.getMessage(),
+                    message.getInteractionTrigger(),
+                    message.getDelaySeconds(),
+                    message.getChancePercent()
+            ));
+        }
+        return copy;
+    }
+
+    @Nonnull
+    private List<DeathDropItem> copyDeathDropItems(@Nonnull List<DeathDropItem> source) {
+        List<DeathDropItem> copy = new ArrayList<>(source.size());
+        for (DeathDropItem drop : source) {
+            copy.add(new DeathDropItem(drop.getItemId(), drop.getQuantity(), drop.getChancePercent()));
+        }
+        return copy;
+    }
+
     private static final int DEATH_ITEMS_PER_PAGE = 75;
 
     public void openDeathConfigGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store,
@@ -5185,39 +6596,25 @@ public class CitizensUI {
             String itemId = drop.getItemId() != null ? drop.getItemId() : "";
             int qty = drop.getQuantity();
 
-            String itemContent = !itemId.isEmpty()
-                    ? "<span class=\"slot-icon item-icon\" data-hyui-item-id=\"" + itemId + "\"></span>"
-                    : "<span class=\"slot-icon item-icon\" data-hyui-item-id=\"\"></span>";
-
-            String labelContent = !itemId.isEmpty()
-                    ? "<p class=\"slot-label slot-label-filled\">" + qty + "x</p>"
-                    : "";
-
             dropsHtml.append("""
-                <div class="drop-item-row">
-                    <p class="drop-item-index">#%d</p>
-                    <div class="spacer-h-sm"></div>
-                    <div class="slot-background">
-                        <button id="drop-item-%d" class="secondary-button raw-button"
-                                style="layout: top; flex-weight: 0; anchor-width: 64; anchor-height: 72;
-                                       background-color: #12161a; padding: 4;">
-                            %s
-                            %s
-                        </button>
-                    </div>
-                    <div class="spacer-h-sm"></div>
+                <div class="list-item">
                     <div class="list-item-content">
-                        <p class="list-item-title">%s</p>
-                        <p class="list-item-subtitle">Quantity: %d &middot; Click to change</p>
+                        <p class="list-item-title">#%d - %s</p>
+                        <p class="list-item-subtitle">Quantity: %d &middot; Chance: %.1f%%</p>
                     </div>
-                    <button id="delete-drop-%d" class="secondary-button small-secondary-button">Delete</button>
+                    <div class="list-item-actions">
+                        <button id="edit-drop-%d" class="secondary-button small-secondary-button">Edit</button>
+                        <div class="spacer-h-sm"></div>
+                        <button id="delete-drop-%d" class="secondary-button small-secondary-button">Delete</button>
+                    </div>
                 </div>
                 <div class="spacer-sm"></div>
                 """.formatted(
                     i + 1,
-                    i, itemContent, labelContent,
                     itemId.isEmpty() ? "Empty Slot" : itemId,
                     qty,
+                    drop.getChancePercent(),
+                    i,
                     i));
         }
 
@@ -5229,7 +6626,7 @@ public class CitizensUI {
                 <div class="list-item">
                     <div class="list-item-content">
                         <p class="list-item-title">/%s</p>
-                        <p class="list-item-subtitle">%s | Delay: %.1fs</p>
+                        <p class="list-item-subtitle">%s | Delay: %.1fs | Chance: %.1f%%</p>
                     </div>
                     <div class="list-item-actions">
                         <button id="edit-dcmd-%d" class="secondary-button small-secondary-button">Edit</button>
@@ -5239,7 +6636,7 @@ public class CitizensUI {
                 </div>
                 <div class="spacer-sm"></div>
                 """.formatted(escapeHtml(cmd.getCommand()),
-                    cmd.isRunAsServer() ? "Server" : "Player", cmd.getDelaySeconds(), i, i));
+                    cmd.isRunAsServer() ? "Server" : "Player", cmd.getDelaySeconds(), cmd.getChancePercent(), i, i));
         }
 
         // Build messages HTML
@@ -5253,7 +6650,7 @@ public class CitizensUI {
                 <div class="list-item">
                     <div class="list-item-content">
                         <p class="list-item-title">%s</p>
-                        <p class="list-item-subtitle">Delay: %.1fs</p>
+                        <p class="list-item-subtitle">Delay: %.1fs | Chance: %.1f%%</p>
                     </div>
                     <div class="list-item-actions">
                         <button id="edit-dmsg-%d" class="secondary-button small-secondary-button">Edit</button>
@@ -5262,7 +6659,7 @@ public class CitizensUI {
                     </div>
                 </div>
                 <div class="spacer-sm"></div>
-                """.formatted(escapeHtml(preview), msg.getDelaySeconds(), i, i));
+                """.formatted(escapeHtml(preview), msg.getDelaySeconds(), msg.getChancePercent(), i, i));
         }
 
         TemplateProcessor template = createBaseTemplate()
@@ -5272,10 +6669,18 @@ public class CitizensUI {
                 .setVariable("cmdCount", cmds.size())
                 .setVariable("hasMsgs", !msgs.isEmpty())
                 .setVariable("msgCount", msgs.size())
+                .setVariable("dropCountMin", dc.getDropCountMin())
+                .setVariable("dropCountMax", dc.getDropCountMax())
+                .setVariable("commandCountMin", dc.getCommandCountMin())
+                .setVariable("commandCountMax", dc.getCommandCountMax())
+                .setVariable("messageCountMin", dc.getMessageCountMin())
+                .setVariable("messageCountMax", dc.getMessageCountMax())
                 .setVariable("cmdModeAll", "ALL".equals(dc.getCommandSelectionMode()))
                 .setVariable("cmdModeRandom", "RANDOM".equals(dc.getCommandSelectionMode()))
+                .setVariable("cmdModeSequential", "SEQUENTIAL".equals(dc.getCommandSelectionMode()))
                 .setVariable("msgModeAll", "ALL".equals(dc.getMessageSelectionMode()))
-                .setVariable("msgModeRandom", "RANDOM".equals(dc.getMessageSelectionMode()));
+                .setVariable("msgModeRandom", "RANDOM".equals(dc.getMessageSelectionMode()))
+                .setVariable("msgModeSequential", "SEQUENTIAL".equals(dc.getMessageSelectionMode()));
 
         String html = template.process(getSharedStyles() + """
                 <div class="page-overlay">
@@ -5302,6 +6707,17 @@ public class CitizensUI {
 
                                 <button id="add-drop-btn" class="secondary-button" style="anchor-width: 200; anchor-height: 40;">Add Drop Item</button>
                                 <div class="spacer-sm"></div>
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=drop-count-min,label=Drops Min,value={{$dropCountMin}},placeholder=0,min=0,max=200,step=1,decimals=0}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=drop-count-max,label=Drops Max,value={{$dropCountMax}},placeholder=0,min=0,max=200,step=1,decimals=0}}
+                                    </div>
+                                </div>
+                                <p class="form-hint">Set both to 0 for default behavior (all eligible drops).</p>
+                                <div class="spacer-sm"></div>
 
                                 {{#if hasDrops}}
                                 <div class="list-container" data-hyui-scrollbar-style='"Common.ui" "DefaultScrollbarStyle"' style="anchor-height: 200;">
@@ -5326,7 +6742,20 @@ public class CitizensUI {
                                     <button id="cmd-mode-all" class="{{#if cmdModeAll}}secondary-button{{else}}secondary-button{{/if}}" style="anchor-width: 120; anchor-height: 40;">All</button>
                                     <div class="spacer-h-sm"></div>
                                     <button id="cmd-mode-random" class="{{#if cmdModeRandom}}secondary-button{{else}}secondary-button{{/if}}" style="anchor-width: 120; anchor-height: 40;">Random</button>
+                                    <div class="spacer-h-sm"></div>
+                                    <button id="cmd-mode-sequential" class="{{#if cmdModeSequential}}secondary-button{{else}}secondary-button{{/if}}" style="anchor-width: 120; anchor-height: 40;">Sequential</button>
                                 </div>
+                                <div class="spacer-sm"></div>
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=command-count-min,label=Commands Min,value={{$commandCountMin}},placeholder=0,min=0,max=200,step=1,decimals=0}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=command-count-max,label=Commands Max,value={{$commandCountMax}},placeholder=0,min=0,max=200,step=1,decimals=0}}
+                                    </div>
+                                </div>
+                                <p class="form-hint">Set both to 0 for default behavior (All mode: all eligible, Random/Sequential: one).</p>
                                 <div class="spacer-sm"></div>
 
                                 {{#if hasCmds}}
@@ -5352,7 +6781,20 @@ public class CitizensUI {
                                     <button id="msg-mode-all" class="{{#if msgModeAll}}secondary-button{{else}}secondary-button{{/if}}" style="anchor-width: 120; anchor-height: 40;">All</button>
                                     <div class="spacer-h-sm"></div>
                                     <button id="msg-mode-random" class="{{#if msgModeRandom}}secondary-button{{else}}secondary-button{{/if}}" style="anchor-width: 120; anchor-height: 40;">Random</button>
+                                    <div class="spacer-h-sm"></div>
+                                    <button id="msg-mode-sequential" class="{{#if msgModeSequential}}secondary-button{{else}}secondary-button{{/if}}" style="anchor-width: 120; anchor-height: 40;">Sequential</button>
                                 </div>
+                                <div class="spacer-sm"></div>
+                                <div class="form-row">
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=message-count-min,label=Messages Min,value={{$messageCountMin}},placeholder=0,min=0,max=200,step=1,decimals=0}}
+                                    </div>
+                                    <div class="spacer-h-sm"></div>
+                                    <div style="flex-weight: 1;">
+                                        {{@numberField:id=message-count-max,label=Messages Max,value={{$messageCountMax}},placeholder=0,min=0,max=200,step=1,decimals=0}}
+                                    </div>
+                                </div>
+                                <p class="form-hint">Set both to 0 for default behavior (All mode: all eligible, Random/Sequential: one).</p>
                                 <div class="spacer-sm"></div>
 
                                 {{#if hasMsgs}}
@@ -5392,6 +6834,49 @@ public class CitizensUI {
                                            CitizenData citizen, DeathConfig dc,
                                            List<DeathDropItem> drops, List<CommandAction> cmds,
                                            List<CitizenMessage> msgs) {
+        page.addEventListener("drop-count-min", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("drop-count-min", Double.class).ifPresent(v -> {
+                dc.setDropCountMin(Math.max(0, v.intValue()));
+                citizen.setDeathConfig(dc);
+                plugin.getCitizensManager().saveCitizen(citizen);
+            });
+        });
+        page.addEventListener("drop-count-max", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("drop-count-max", Double.class).ifPresent(v -> {
+                dc.setDropCountMax(Math.max(0, v.intValue()));
+                citizen.setDeathConfig(dc);
+                plugin.getCitizensManager().saveCitizen(citizen);
+            });
+        });
+        page.addEventListener("command-count-min", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("command-count-min", Double.class).ifPresent(v -> {
+                dc.setCommandCountMin(Math.max(0, v.intValue()));
+                citizen.setDeathConfig(dc);
+                plugin.getCitizensManager().saveCitizen(citizen);
+            });
+        });
+        page.addEventListener("command-count-max", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("command-count-max", Double.class).ifPresent(v -> {
+                dc.setCommandCountMax(Math.max(0, v.intValue()));
+                citizen.setDeathConfig(dc);
+                plugin.getCitizensManager().saveCitizen(citizen);
+            });
+        });
+        page.addEventListener("message-count-min", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("message-count-min", Double.class).ifPresent(v -> {
+                dc.setMessageCountMin(Math.max(0, v.intValue()));
+                citizen.setDeathConfig(dc);
+                plugin.getCitizensManager().saveCitizen(citizen);
+            });
+        });
+        page.addEventListener("message-count-max", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("message-count-max", Double.class).ifPresent(v -> {
+                dc.setMessageCountMax(Math.max(0, v.intValue()));
+                citizen.setDeathConfig(dc);
+                plugin.getCitizensManager().saveCitizen(citizen);
+            });
+        });
+
         // Add drop item
         page.addEventListener("add-drop-btn", CustomUIEventBindingType.Activating, event -> {
             openDeathItemSelectionGUI(playerRef, store, citizen, "", 0, -1);
@@ -5400,7 +6885,7 @@ public class CitizensUI {
         // Drop item click (to change) and delete
         for (int i = 0; i < drops.size(); i++) {
             final int index = i;
-            page.addEventListener("drop-item-" + i, CustomUIEventBindingType.Activating, event -> {
+            page.addEventListener("edit-drop-" + i, CustomUIEventBindingType.Activating, event -> {
                 openDeathItemSelectionGUI(playerRef, store, citizen, "", 0, index);
             });
             page.addEventListener("delete-drop-" + i, CustomUIEventBindingType.Activating, event -> {
@@ -5426,10 +6911,16 @@ public class CitizensUI {
             plugin.getCitizensManager().saveCitizen(citizen);
             openDeathConfigGUI(playerRef, store, citizen);
         });
+        page.addEventListener("cmd-mode-sequential", CustomUIEventBindingType.Activating, event -> {
+            dc.setCommandSelectionMode("SEQUENTIAL");
+            citizen.setDeathConfig(dc);
+            plugin.getCitizensManager().saveCitizen(citizen);
+            openDeathConfigGUI(playerRef, store, citizen);
+        });
 
         // Add command
         page.addEventListener("add-dcmd-btn", CustomUIEventBindingType.Activating, event -> {
-            openEditDeathCommandGUI(playerRef, store, citizen, new CommandAction("", true, 0), -1);
+            openEditDeathCommandGUI(playerRef, store, citizen, new CommandAction("", true, 0, "BOTH", 100.0f), -1);
         });
 
         // Edit/delete commands
@@ -5461,10 +6952,16 @@ public class CitizensUI {
             plugin.getCitizensManager().saveCitizen(citizen);
             openDeathConfigGUI(playerRef, store, citizen);
         });
+        page.addEventListener("msg-mode-sequential", CustomUIEventBindingType.Activating, event -> {
+            dc.setMessageSelectionMode("SEQUENTIAL");
+            citizen.setDeathConfig(dc);
+            plugin.getCitizensManager().saveCitizen(citizen);
+            openDeathConfigGUI(playerRef, store, citizen);
+        });
 
         // Add message
         page.addEventListener("add-dmsg-btn", CustomUIEventBindingType.Activating, event -> {
-            openEditDeathMessageGUI(playerRef, store, citizen, new CitizenMessage("", null, 0), -1);
+            openEditDeathMessageGUI(playerRef, store, citizen, new CitizenMessage("", null, 0, 100.0f), -1);
         });
 
         // Edit/delete messages
@@ -5554,13 +7051,15 @@ public class CitizensUI {
                 }
 
                 itemsHtml.append("""
-                    <div style="layout: top; flex-weight: 0; anchor-width: 90; anchor-height: 90; background-color: #535359;">
-                        <button id="pick-%d" class="secondary-button raw-button" style="layout: top; flex-weight: 0; anchor-width: 80; anchor-height: 80; background-color: #21262d; padding: 6;">
+                    <div style="layout: top; flex-weight: 0; anchor-width: 96; anchor-height: 120; background-color: #535359; padding: 4;">
+                        <div style="layout: top; flex-weight: 0; anchor-width: 88; anchor-height: 78; background-color: #21262d; padding: 6;">
                             <span class="item-icon" data-hyui-item-id="%s" style="anchor-width: 36; anchor-height: 36;"></span>
                             <p style="color: #e6edf3; font-size: 9; text-align: center;">%s</p>
-                        </button>
+                        </div>
+                        <div style="flex-weight: 0; anchor-height: 6;"></div>
+                        <button id="pick-%d" class="secondary-button small-secondary-button" style="anchor-width: 88; anchor-height: 28;">Select</button>
                     </div>
-                    """.formatted(i, itemId, displayName));
+                    """.formatted(itemId, displayName, i));
             }
             itemsHtml.append("</div>\n");
         }
@@ -5665,8 +7164,10 @@ public class CitizensUI {
                                           @Nonnull CitizenData citizen, @Nonnull String itemId, int editDropIndex) {
         DeathConfig dc = citizen.getDeathConfig();
         int currentQty = 1;
+        float currentChance = 100.0f;
         if (editDropIndex >= 0 && editDropIndex < dc.getDropItems().size()) {
             currentQty = dc.getDropItems().get(editDropIndex).getQuantity();
+            currentChance = dc.getDropItems().get(editDropIndex).getChancePercent();
         }
 
         Item item = Item.getAssetMap().getAssetMap().get(itemId);
@@ -5684,11 +7185,12 @@ public class CitizensUI {
         TemplateProcessor template = createBaseTemplate()
                 .setVariable("itemId", itemId)
                 .setVariable("displayName", displayName)
-                .setVariable("currentQty", currentQty);
+                .setVariable("currentQty", currentQty)
+                .setVariable("currentChance", currentChance);
 
         String html = template.process(getSharedStyles() + """
                 <div class="page-overlay">
-                    <div class="main-container decorated-container" style="anchor-width: 500; anchor-height: 400;">
+                    <div class="main-container decorated-container" style="anchor-width: 500; anchor-height: 500;">
 
                         <div class="header container-title">
                             <div class="header-content">
@@ -5710,6 +7212,12 @@ public class CitizensUI {
                                         {{@numberField:id=quantity-input,label=Quantity,value={{$currentQty}},placeholder=1,min=1,max=9999,step=1,decimals=0}}
                                     </div>
                                 </div>
+                                <div class="spacer-sm"></div>
+                                <div style="layout: center; flex-weight: 0;">
+                                    <div style="anchor-width: 250; flex-weight: 0;">
+                                        {{@numberField:id=chance-input,label=Chance %,value={{$currentChance}},placeholder=100,min=0,max=100,step=1,decimals=1}}
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -5728,6 +7236,7 @@ public class CitizensUI {
                 .fromHtml(html);
 
         final int[] quantity = {currentQty};
+        final float[] chancePercent = {currentChance};
 
         page.addEventListener("quantity-input", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
             ctx.getValue("quantity-input", Double.class).ifPresent(val -> {
@@ -5735,9 +7244,15 @@ public class CitizensUI {
             });
         });
 
+        page.addEventListener("chance-input", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("chance-input", Double.class).ifPresent(val -> {
+                chancePercent[0] = Math.max(0.0f, Math.min(100.0f, val.floatValue()));
+            });
+        });
+
         page.addEventListener("qty-confirm-btn", CustomUIEventBindingType.Activating, event -> {
             List<DeathDropItem> drops = new ArrayList<>(dc.getDropItems());
-            DeathDropItem dropItem = new DeathDropItem(itemId, quantity[0]);
+            DeathDropItem dropItem = new DeathDropItem(itemId, quantity[0], chancePercent[0]);
 
             if (editDropIndex >= 0 && editDropIndex < drops.size()) {
                 drops.set(editDropIndex, dropItem);
@@ -5767,11 +7282,12 @@ public class CitizensUI {
                 .setVariable("command", escapeHtml(command.getCommand()))
                 .setVariable("runAsServer", command.isRunAsServer())
                 .setVariable("delaySeconds", command.getDelaySeconds())
+                .setVariable("chancePercent", command.getChancePercent())
                 .setVariable("isNew", isNew);
 
         String html = template.process(getSharedStyles() + """
                 <div class="page-overlay">
-                    <div class="main-container decorated-container" style="anchor-width: 680; anchor-height: 480;">
+                    <div class="main-container decorated-container" style="anchor-width: 680; anchor-height: 620;">
 
                         <div class="header container-title">
                             <div class="header-content">
@@ -5787,7 +7303,7 @@ public class CitizensUI {
                                 {{@sectionHeader:title=Command}}
                                 <input type="text" id="command-input" class="form-input" value="{{$command}}"
                                        placeholder="give {PlayerName} Rock_Gem_Diamond" />
-                                <p class="form-hint">Do not include the leading /. Use {PlayerName} or {CitizenName} as variables.</p>
+                                <p class="form-hint">Do not include the leading /. Variables: {PlayerName}, {CitizenName}, {NpcX}, {NpcY}, {NpcZ}.</p>
                             </div>
 
                             <div class="spacer-md"></div>
@@ -5795,6 +7311,13 @@ public class CitizensUI {
                             <div class="section">
                                 {{@sectionHeader:title=Delay}}
                                 {{@numberField:id=delay-seconds,label=Delay Before Command (seconds),value={{$delaySeconds}},placeholder=0,min=0,max=300,step=0.5,decimals=1}}
+                            </div>
+
+                            <div class="spacer-md"></div>
+
+                            <div class="section">
+                                {{@sectionHeader:title=Chance}}
+                                {{@numberField:id=chance-percent,label=Chance %,value={{$chancePercent}},placeholder=100,min=0,max=100,step=1,decimals=1}}
                             </div>
 
                             <div class="spacer-md"></div>
@@ -5828,6 +7351,7 @@ public class CitizensUI {
         final String[] commandText = {command.getCommand()};
         final boolean[] runAsServer = {command.isRunAsServer()};
         final float[] delaySeconds = {command.getDelaySeconds()};
+        final float[] chancePercent = {command.getChancePercent()};
 
         page.addEventListener("command-input", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
             commandText[0] = ctx.getValue("command-input", String.class).orElse("");
@@ -5846,6 +7370,12 @@ public class CitizensUI {
             runAsServer[0] = ctx.getValue("run-as-server", Boolean.class).orElse(false);
         });
 
+        page.addEventListener("chance-percent", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("chance-percent", Double.class).ifPresent(val -> {
+                chancePercent[0] = Math.max(0.0f, Math.min(100.0f, val.floatValue()));
+            });
+        });
+
         page.addEventListener("save-dcmd-btn", CustomUIEventBindingType.Activating, event -> {
             String cmd = commandText[0].trim();
             if (cmd.isEmpty()) {
@@ -5856,7 +7386,7 @@ public class CitizensUI {
 
             DeathConfig dc = citizen.getDeathConfig();
             List<CommandAction> cmds = new ArrayList<>(dc.getDeathCommands());
-            CommandAction saved = new CommandAction(cmd, runAsServer[0], delaySeconds[0]);
+            CommandAction saved = new CommandAction(cmd, runAsServer[0], delaySeconds[0], "BOTH", chancePercent[0]);
 
             if (isNew) {
                 cmds.add(saved);
@@ -5886,11 +7416,12 @@ public class CitizensUI {
         TemplateProcessor template = createBaseTemplate()
                 .setVariable("message", escapeHtml(message.getMessage()))
                 .setVariable("delaySeconds", message.getDelaySeconds())
+                .setVariable("chancePercent", message.getChancePercent())
                 .setVariable("isNew", isNew);
 
         String html = template.process(getSharedStyles() + """
                 <div class="page-overlay">
-                    <div class="main-container decorated-container" style="anchor-width: 680; anchor-height: 400;">
+                    <div class="main-container decorated-container" style="anchor-width: 680; anchor-height: 520;">
 
                         <div class="header container-title">
                             <div class="header-content">
@@ -5906,7 +7437,11 @@ public class CitizensUI {
                                 {{@sectionHeader:title=Message Text}}
                                 <input type="text" id="message-input" class="form-input" value="{{$message}}"
                                        placeholder="Enter message with optional color codes..." />
-                                <p class="form-hint">Colors: {RED}, {GREEN}, {#HEX}. Variables: {PlayerName}, {CitizenName}</p>
+                                <p class="form-hint">Colors: {COLOR}, {RED}, {BLUE}, {#HEX}, {#FFA500}, etc.</p>
+                                <div class="spacer-xs"></div>
+                                <p class="form-hint">Rich text: **bold**, *italic*, [label](https://example.com).</p>
+                                <div class="spacer-xs"></div>
+                                <p class="form-hint">Colors: Variables: {PlayerName}, {CitizenName}, {NpcX}, {NpcY}, {NpcZ}.</p>
                             </div>
 
                             <div class="spacer-md"></div>
@@ -5914,6 +7449,13 @@ public class CitizensUI {
                             <div class="section">
                                 {{@sectionHeader:title=Delay}}
                                 {{@numberField:id=delay-seconds,label=Delay Before Message (seconds),value={{$delaySeconds}},placeholder=0,min=0,max=60,step=0.5,decimals=1}}
+                            </div>
+
+                            <div class="spacer-md"></div>
+
+                            <div class="section">
+                                {{@sectionHeader:title=Chance}}
+                                {{@numberField:id=chance-percent,label=Chance %,value={{$chancePercent}},placeholder=100,min=0,max=100,step=1,decimals=1}}
                             </div>
                         </div>
 
@@ -5933,6 +7475,7 @@ public class CitizensUI {
 
         final String[] messageText = {message.getMessage()};
         final float[] delaySeconds = {message.getDelaySeconds()};
+        final float[] chancePercent = {message.getChancePercent()};
 
         page.addEventListener("message-input", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
             messageText[0] = ctx.getValue("message-input", String.class).orElse("");
@@ -5947,6 +7490,12 @@ public class CitizensUI {
             }
         });
 
+        page.addEventListener("chance-percent", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("chance-percent", Double.class).ifPresent(val -> {
+                chancePercent[0] = Math.max(0.0f, Math.min(100.0f, val.floatValue()));
+            });
+        });
+
         page.addEventListener("save-dmsg-btn", CustomUIEventBindingType.Activating, event -> {
             if (messageText[0].trim().isEmpty()) {
                 playerRef.sendMessage(Message.raw("Message cannot be empty!").color(Color.RED));
@@ -5955,7 +7504,7 @@ public class CitizensUI {
 
             DeathConfig dc = citizen.getDeathConfig();
             List<CitizenMessage> msgs = new ArrayList<>(dc.getDeathMessages());
-            CitizenMessage saved = new CitizenMessage(messageText[0].trim(), null, delaySeconds[0]);
+            CitizenMessage saved = new CitizenMessage(messageText[0].trim(), null, delaySeconds[0], chancePercent[0]);
 
             if (isNew) {
                 msgs.add(saved);
@@ -5989,12 +7538,16 @@ public class CitizensUI {
             pathsHtml.append("""
                                     <div class="list-item">
                                         <div style="flex-weight: 1;">
-                                            <p style="font-size: 14; font-weight: bold;">%s</p>
+                                            <div>
+                                                <p style="font-size: 14; font-weight: bold;">%s</p>
+                                            </div>
                                             <div>
                                                 <p style="font-size: 12; color: #888888;">%s | %d waypoints</p>
                                             </div>
                                         </div>
                                         <button id="edit-path-%d" class="secondary-button" style="anchor-width: 100;">Edit</button>
+                                        <div class="spacer-h-xs"></div>
+                                        <button id="rename-path-%d" class="secondary-button" style="anchor-width: 110;">Rename</button>
                                         <div class="spacer-h-xs"></div>
                                         <button id="delete-path-%d" class="secondary-button" style="anchor-width: 120;">Delete</button>
                                     </div>
@@ -6003,6 +7556,7 @@ public class CitizensUI {
                     escapeHtml(path.getName()),
                     escapeHtml(path.getLoopMode().name()),
                     path.getWaypoints().size(),
+                    i,
                     i,
                     i
             ));
@@ -6101,6 +7655,9 @@ public class CitizensUI {
             page.addEventListener("edit-path-" + index, CustomUIEventBindingType.Activating, event -> {
                 openPatrolPathEditorGUI(playerRef, store, citizen, name);
             });
+            page.addEventListener("rename-path-" + index, CustomUIEventBindingType.Activating, event -> {
+                openRenamePatrolPathGUI(playerRef, store, citizen, name);
+            });
             page.addEventListener("delete-path-" + index, CustomUIEventBindingType.Activating, event -> {
                 plugin.getCitizensManager().stopCitizenPatrol(citizen.getId());
                 plugin.getCitizensManager().getPatrolManager().deletePath(name);
@@ -6117,6 +7674,74 @@ public class CitizensUI {
         page.addEventListener("back-btn", CustomUIEventBindingType.Activating, event -> {
             openBehaviorsGUI(playerRef, store, citizen);
         });
+    }
+
+    private void openRenamePatrolPathGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store,
+                                         @Nonnull CitizenData citizen, @Nonnull String oldPathName) {
+        TemplateProcessor template = createBaseTemplate()
+                .setVariable("oldName", escapeHtml(oldPathName))
+                .setVariable("newName", escapeHtml(oldPathName));
+
+        String html = template.process(getSharedStyles() + """
+                <div class="page-overlay">
+                    <div class="main-container decorated-container" style="anchor-width: 620; anchor-height: 360;">
+                        <div class="header container-title">
+                            <div class="header-content">
+                                <p class="header-title">Rename Patrol Path</p>
+                            </div>
+                        </div>
+                        <div class="body">
+                            <p class="page-description">Rename this path and update all citizen references</p>
+                            <div class="spacer-sm"></div>
+                            <div class="section">
+                                {{@formField:id=new-path-name,label=New Path Name,value={{$newName}},placeholder=Enter a new path name...}}
+                                <div class="spacer-xs"></div>
+                                <p class="form-hint">Current name: {{$oldName}}</p>
+                            </div>
+                        </div>
+                        <div class="footer">
+                            <button id="cancel-btn" class="secondary-button">Cancel</button>
+                            <div class="spacer-h-md"></div>
+                            <button id="save-btn" class="secondary-button" style="anchor-width: 210;">Rename Path</button>
+                        </div>
+                    </div>
+                </div>
+                """);
+
+        PageBuilder page = PageBuilder.pageForPlayer(playerRef)
+                .withLifetime(CustomPageLifetime.CanDismiss)
+                .fromHtml(html);
+
+        final String[] newName = {oldPathName};
+        page.addEventListener("new-path-name", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            newName[0] = ctx.getValue("new-path-name", String.class).orElse(oldPathName).trim();
+        });
+
+        page.addEventListener("save-btn", CustomUIEventBindingType.Activating, event -> {
+            if (newName[0].isEmpty()) {
+                playerRef.sendMessage(Message.raw("Please enter a new path name.").color(Color.RED));
+                return;
+            }
+            if (newName[0].equals(oldPathName)) {
+                playerRef.sendMessage(Message.raw("That is already the current path name.").color(Color.YELLOW));
+                openPatrolPathsGUI(playerRef, store, citizen);
+                return;
+            }
+
+            boolean renamed = plugin.getCitizensManager().renamePatrolPath(oldPathName, newName[0]);
+            if (!renamed) {
+                playerRef.sendMessage(Message.raw("Could not rename path. Check if the new name already exists.").color(Color.RED));
+                return;
+            }
+
+            playerRef.sendMessage(Message.raw("Patrol path renamed to '" + newName[0] + "'.").color(Color.GREEN));
+            openPatrolPathsGUI(playerRef, store, citizen);
+        });
+
+        page.addEventListener("cancel-btn", CustomUIEventBindingType.Activating, event ->
+                openPatrolPathsGUI(playerRef, store, citizen));
+
+        page.open(store);
     }
 
     public void openPatrolPathEditorGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store,
@@ -6142,7 +7767,7 @@ public class CitizensUI {
 
         String html = template.process(getSharedStyles() + """
                 <div class="page-overlay">
-                    <div class="main-container decorated-container" style="anchor-width: 900; anchor-height: 700;">
+                    <div class="main-container decorated-container" style="anchor-width: 900; anchor-height: 750;">
 
                         <div class="header container-title">
                             <div class="header-content">

@@ -4,6 +4,7 @@ import com.electro.hycitizens.HyCitizensPlugin;
 import com.electro.hycitizens.models.CitizenData;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.math.util.ChunkUtil;
+import com.hypixel.hytale.math.vector.Vector3d;
 import com.hypixel.hytale.server.core.HytaleServer;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.chunk.WorldChunk;
@@ -20,6 +21,9 @@ import java.util.concurrent.TimeUnit;
 import static com.hypixel.hytale.logger.HytaleLogger.getLogger;
 
 public class ChunkPreLoadListener {
+    private static final long NPC_RESOLVE_TIMEOUT_MS = 15_000L;
+    private static final long NPC_RESOLVE_RETRY_MS = 500L;
+
     private final HyCitizensPlugin plugin;
     private final Set<String> citizensBeingProcessed = ConcurrentHashMap.newKeySet();
     private final Set<String> citizensPendingNpcResolution = ConcurrentHashMap.newKeySet();
@@ -41,15 +45,22 @@ public class ChunkPreLoadListener {
             if (!worldUUID.equals(citizen.getWorldUUID()))
                 continue;
 
+            if (citizen.isAwaitingRespawn()) {
+                continue;
+            }
+
             // Skip citizens that were just created (within last 10 seconds) to prevent double spawning
             long timeSinceCreation = System.currentTimeMillis() - citizen.getCreatedAt();
             if (timeSinceCreation < 10000) {
                 continue;
             }
 
-            // Check if the citizen is in the chunk
-            long citizenChunkIndex = ChunkUtil.indexChunkFromBlock(citizen.getCurrentPosition().x, citizen.getCurrentPosition().z);
-            if (eventChunkIndex != citizenChunkIndex) {
+            // Match either persisted current position or base spawn position.
+            Vector3d currentPosition = citizen.getCurrentPosition() != null ? citizen.getCurrentPosition() : citizen.getPosition();
+            long currentChunkIndex = ChunkUtil.indexChunkFromBlock(currentPosition.x, currentPosition.z);
+            Vector3d basePosition = citizen.getPosition();
+            long baseChunkIndex = ChunkUtil.indexChunkFromBlock(basePosition.x, basePosition.z);
+            if (eventChunkIndex != currentChunkIndex && eventChunkIndex != baseChunkIndex) {
                 continue;
             }
 
@@ -60,16 +71,24 @@ public class ChunkPreLoadListener {
 
             // Hand off the heavy work to run outside the event
             HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
-                processCitizenAsync(world, citizen, citizenChunkIndex);
+                processCitizenAsync(world, citizen, eventChunkIndex);
             }, 0, TimeUnit.MILLISECONDS);
         }
     }
 
     private void processCitizenAsync(World world, CitizenData citizen, long chunkIndex) {
+        if (citizen.isAwaitingRespawn()) {
+            return;
+        }
+
         // First check if the chunk is already loaded
         WorldChunk loadedChunk = world.getChunkIfLoaded(chunkIndex);
         if (loadedChunk != null) {
             world.execute(() -> {
+                if (citizen.isAwaitingRespawn()) {
+                    return;
+                }
+
                 Ref<EntityStore> entityRef = null;
                 if (citizen.getSpawnedUUID() != null) {
                     entityRef = world.getEntityRef(citizen.getSpawnedUUID());
@@ -96,6 +115,11 @@ public class ChunkPreLoadListener {
         boolean[] hologramCheckScheduled = { false };
 
         futureRef[0] = HytaleServer.SCHEDULED_EXECUTOR.scheduleAtFixedRate(() -> {
+            if (citizen.isAwaitingRespawn()) {
+                futureRef[0].cancel(false);
+                return;
+            }
+
             if (spawned[0]) {
                 futureRef[0].cancel(false);
                 return;
@@ -120,6 +144,10 @@ public class ChunkPreLoadListener {
                     world.loadChunkIfInMemory(chunkIndex);
 
                     world.execute(() -> {
+                        if (citizen.isAwaitingRespawn()) {
+                            return;
+                        }
+
                         Ref<EntityStore> entityRef = null;
                         if (citizen.getSpawnedUUID() != null) {
                             entityRef = world.getEntityRef(citizen.getSpawnedUUID());
@@ -149,6 +177,10 @@ public class ChunkPreLoadListener {
             queued[0] = true;
 
             world.execute(() -> {
+                if (citizen.isAwaitingRespawn()) {
+                    return;
+                }
+
                 WorldChunk chunk = world.getChunkIfLoaded(chunkIndex);
 
                 if (chunk == null) {
@@ -182,6 +214,10 @@ public class ChunkPreLoadListener {
     }
 
     private void resolveOrSpawnCitizenNPC(@Nonnull World world, @Nonnull CitizenData citizen, boolean save) {
+        if (citizen.isAwaitingRespawn()) {
+            return;
+        }
+
         UUID storedUuid = citizen.getSpawnedUUID();
         if (storedUuid == null) {
             plugin.getCitizensManager().spawnCitizenNPC(citizen, save);
@@ -195,46 +231,77 @@ public class ChunkPreLoadListener {
         }
 
         // The chunk pre-load event can run before UUID-backed entities are fully reattached.
-        // Delay fallback spawning to avoid creating a second NPC while the original is still loading.
+        // Retry UUID resolution before deciding it is stale.
         if (!citizensPendingNpcResolution.add(citizen.getId())) {
             return;
         }
 
-        HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> world.execute(() -> {
-            citizensPendingNpcResolution.remove(citizen.getId());
+        long resolutionStart = System.currentTimeMillis();
+        final ScheduledFuture<?>[] futureRef = new ScheduledFuture<?>[1];
+        futureRef[0] = HytaleServer.SCHEDULED_EXECUTOR.scheduleAtFixedRate(() -> world.execute(() -> {
+            if (citizen.isAwaitingRespawn()) {
+                if (futureRef[0] != null) {
+                    futureRef[0].cancel(false);
+                }
+                citizensPendingNpcResolution.remove(citizen.getId());
+                return;
+            }
+
+            Ref<EntityStore> currentCitizenRef = citizen.getNpcRef();
+            if (currentCitizenRef != null && currentCitizenRef.isValid()) {
+                if (futureRef[0] != null) {
+                    futureRef[0].cancel(false);
+                }
+                citizensPendingNpcResolution.remove(citizen.getId());
+                return;
+            }
 
             UUID retryUuid = citizen.getSpawnedUUID();
-            if (retryUuid == null) {
-                plugin.getCitizensManager().spawnCitizenNPC(citizen, save);
+            if (retryUuid != null) {
+                Ref<EntityStore> resolvedRef = world.getEntityRef(retryUuid);
+                if (resolvedRef != null && resolvedRef.isValid()) {
+                    if (futureRef[0] != null) {
+                        futureRef[0].cancel(false);
+                    }
+                    citizensPendingNpcResolution.remove(citizen.getId());
+                    onCitizenEntityResolved(citizen, resolvedRef);
+                    return;
+                }
+            }
+
+            if (System.currentTimeMillis() - resolutionStart < NPC_RESOLVE_TIMEOUT_MS) {
                 return;
             }
 
-            Ref<EntityStore> resolvedRef = world.getEntityRef(retryUuid);
-            if (resolvedRef != null && resolvedRef.isValid()) {
-                onCitizenEntityResolved(citizen, resolvedRef);
-                return;
+            if (futureRef[0] != null) {
+                futureRef[0].cancel(false);
             }
+            citizensPendingNpcResolution.remove(citizen.getId());
 
-            // UUID is stale after waiting; allow a fresh spawn with a new UUID.
-            citizen.setSpawnedUUID(null);
-            citizen.setNpcRef(null);
+            // UUID is stale after retry timeout; allow a fresh spawn with a new UUID.
+            plugin.getCitizensManager().clearCitizenEntityBinding(citizen);
             plugin.getCitizensManager().spawnCitizenNPC(citizen, save);
-        }), 4, TimeUnit.SECONDS);
+        }), NPC_RESOLVE_RETRY_MS, NPC_RESOLVE_RETRY_MS, TimeUnit.MILLISECONDS);
     }
 
     private void onCitizenEntityResolved(@Nonnull CitizenData citizen, @Nonnull Ref<EntityStore> entityRef) {
+        if (citizen.isAwaitingRespawn()) {
+            return;
+        }
+
+        plugin.getCitizensManager().bindCitizenEntityBinding(citizen, entityRef);
+
         if (citizen.isPlayerModel()) {
             plugin.getCitizensManager().updateCitizenSkin(citizen, true);
         }
 
-        citizen.setNpcRef(entityRef);
         HyCitizensPlugin.get().getCitizensManager().setInteractionComponent(entityRef.getStore(), entityRef, citizen);
         HyCitizensPlugin.get().getCitizensManager().refreshNpcNameplate(citizen);
+        HyCitizensPlugin.get().getCitizensManager().triggerAnimations(citizen, "DEFAULT");
 
-        // Todo: Change this to make it so it starts at the closest waypoint
         String pluginPatrolPath = citizen.getPathConfig().getPluginPatrolPath();
         if (!pluginPatrolPath.isEmpty()) {
-            plugin.getCitizensManager().getPatrolManager().startPatrol(citizen.getId(), pluginPatrolPath);
+            plugin.getCitizensManager().startCitizenPatrol(citizen.getId(), pluginPatrolPath);
         }
     }
 

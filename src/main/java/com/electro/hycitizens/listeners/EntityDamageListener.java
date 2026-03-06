@@ -2,7 +2,6 @@ package com.electro.hycitizens.listeners;
 
 import com.electro.hycitizens.HyCitizensPlugin;
 import com.electro.hycitizens.events.CitizenDeathEvent;
-import com.electro.hycitizens.events.CitizenInteractEvent;
 import com.electro.hycitizens.interactions.CitizenInteraction;
 import com.electro.hycitizens.models.*;
 import com.hypixel.hytale.component.*;
@@ -31,18 +30,14 @@ import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
-import com.hypixel.hytale.server.npc.entities.NPCEntity;
-
 import com.hypixel.hytale.server.core.inventory.ItemStack;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import java.awt.*;
 import java.awt.Color;
-import java.util.ArrayList;
+import java.util.*;
 import java.util.List;
-import java.util.Map;
-import java.util.Random;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -63,210 +58,139 @@ public class EntityDamageListener extends DamageEventSystem {
         try {
             Ref<EntityStore> targetRef = archetypeChunk.getReferenceTo(i);
             UUIDComponent uuidComponent = store.getComponent(targetRef, UUIDComponent.getComponentType());
-
-            assert uuidComponent != null;
-            NPCEntity npcEntity = store.getComponent(targetRef, NPCEntity.getComponentType());
-            Damage.Source source = event.getSource();
-
-            // Check if citizen is damaging a player
-            if (npcEntity == null)
-            {
-                PlayerRef playerRef = store.getComponent(targetRef, PlayerRef.getComponentType());
-                if (playerRef == null) {
-                    return;
-                }
-
-                NPCEntity attackerNpc = null;
-                Ref<EntityStore> attackerEntityRef = null;
-
-                if (source instanceof Damage.ProjectileSource) {
-                    Damage.ProjectileSource projectileSource = (Damage.ProjectileSource) source;
-                    attackerEntityRef = projectileSource.getRef();
-
-                    if (attackerEntityRef != null) {
-                        attackerNpc = store.getComponent(attackerEntityRef, NPCEntity.getComponentType());
-                    }
-                }
-                else if (source instanceof Damage.EntitySource) {
-                    Damage.EntitySource entitySource = (Damage.EntitySource) source;
-                    attackerEntityRef = entitySource.getRef();
-                    attackerNpc = store.getComponent(attackerEntityRef, NPCEntity.getComponentType());
-                }
-
-                if (attackerNpc == null) {
-                    return;
-                }
-
-                // Check which citizen is attacking the player
-                List<CitizenData> citizens = HyCitizensPlugin.get().getCitizensManager().getAllCitizens();
-                for (CitizenData citizen : citizens) {
-                    if (citizen.getNpcRef() == null) {
-                        continue;
-                    }
-
-                    if (!citizen.getNpcRef().equals(attackerEntityRef)) {
-                        continue;
-                    }
-
-                    if (citizen.isOverrideDamage() && citizen.getDamageAmount() >= 0) {
-                        event.setAmount(citizen.getDamageAmount());
-                    }
-
-                    return;
-                }
-
+            if (uuidComponent == null) {
                 return;
             }
 
-            // Something is damaging citizen
-            PlayerRef attackerPlayerRef;
-
-            if (source instanceof Damage.ProjectileSource) {
-                Damage.ProjectileSource projectileSource = (Damage.ProjectileSource) source;
-                Ref<EntityStore> shooterRef = projectileSource.getRef();
-                if (shooterRef != null) {
-                    attackerPlayerRef = store.getComponent(shooterRef, PlayerRef.getComponentType());
-                } else {
-                    attackerPlayerRef = null;
-                }
-            }
-            else if (source instanceof Damage.EntitySource) {
-                Damage.EntitySource entitySource = (Damage.EntitySource) source;
-                Ref<EntityStore> attackerRef = entitySource.getRef();
-                attackerPlayerRef = store.getComponent(attackerRef, PlayerRef.getComponentType());
-            } else {
-                attackerPlayerRef = null;
-            }
-
-            if (attackerPlayerRef == null)
-                return;
-
-            // Todo: It would be best to give the citizens a custom component. There may be compatibility issues if citizens already exist though
             List<CitizenData> citizens = HyCitizensPlugin.get().getCitizensManager().getAllCitizens();
-            for (CitizenData citizen : citizens) {
-                if (citizen.getSpawnedUUID() == null) {
-                    continue;
-                }
+            Damage.Source source = event.getSource();
+            Ref<EntityStore> attackerEntityRef = getAttackerEntityRef(source);
+            UUID attackerUuid = getEntityUuid(attackerEntityRef);
 
-                if (!citizen.getSpawnedUUID().equals(uuidComponent.getUuid())) {
-                    continue;
-                }
+            PlayerRef attackerPlayerRef = null;
+            if (attackerEntityRef != null && attackerEntityRef.isValid()) {
+                attackerPlayerRef = attackerEntityRef.getStore().getComponent(attackerEntityRef, PlayerRef.getComponentType());
+            }
 
-                // Passive citizens always cancel damage - they never enter combat
-                boolean cancelDamage = !citizen.isTakesDamage() || "PASSIVE".equals(citizen.getAttitude());
+            CitizenData attackerCitizen = findCitizenByEntity(citizens, attackerEntityRef, attackerUuid);
+            if (attackerCitizen != null && attackerCitizen.isOverrideDamage() && attackerCitizen.getDamageAmount() >= 0) {
+                event.setAmount(attackerCitizen.getDamageAmount());
+            }
 
-                // Trigger ON_ATTACK animations regardless of damage setting
-                HyCitizensPlugin.get().getCitizensManager().triggerAnimations(citizen, "ON_ATTACK");
+            CitizenData targetCitizen = findCitizenByEntity(citizens, targetRef, uuidComponent.getUuid());
+            if (targetCitizen == null) {
+                return;
+            }
 
-//            CitizenInteraction.handleInteraction(citizen, attackerPlayerRef); // Handled by new interaction system
+            // Passive citizens always cancel damage - they never enter combat
+            boolean cancelDamage = !targetCitizen.isTakesDamage() || "PASSIVE".equals(targetCitizen.getAttitude());
 
-                if (cancelDamage) {
-                    // This is now handled by the Invulnerable component, but we are keeping it for backwards compatibility
-                    Invulnerable invulnerable = store.getComponent(targetRef, Invulnerable.getComponentType());
+            // Trigger ON_ATTACK animations regardless of damage setting
+            HyCitizensPlugin.get().getCitizensManager().triggerAnimations(targetCitizen, "ON_ATTACK");
 
-                    if (invulnerable == null) {
-                        event.setCancelled(true);
-                        event.setAmount(0);
-                        World world = Universe.get().getWorld(citizen.getWorldUUID());
-                        // Todo: This does not work
+//            CitizenInteraction.handleInteraction(targetCitizen, attackerPlayerRef); // Handled by new interaction system
+
+            if (cancelDamage) {
+                // This is now handled by the Invulnerable component, but we are keeping it for backwards compatibility
+                Invulnerable invulnerable = store.getComponent(targetRef, Invulnerable.getComponentType());
+
+                if (invulnerable == null) {
+                    event.setCancelled(true);
+                    event.setAmount(0);
+                    World world = Universe.get().getWorld(targetCitizen.getWorldUUID());
+                    // Todo: This does not work
 //                if (world != null) {
 //                    // Prevent knockback
 //                    world.execute(() -> {
 //                        store.removeComponentIfExists(targetRef, KnockbackComponent.getComponentType());
 //                    });
 //                }
-                        // Temporary solution to knockback
-                        TransformComponent transformComponent = store.getComponent(targetRef, TransformComponent.getComponentType());
-                        if (transformComponent != null && world != null) {
-                            Vector3d lockedPosition = new Vector3d(transformComponent.getPosition());
+                    // Temporary solution to knockback
+                    TransformComponent transformComponent = store.getComponent(targetRef, TransformComponent.getComponentType());
+                    if (transformComponent != null && world != null) {
+                        Vector3d lockedPosition = new Vector3d(transformComponent.getPosition());
 
-                            ScheduledFuture<?> lockTask = HytaleServer.SCHEDULED_EXECUTOR.scheduleAtFixedRate(() -> {
-                                if (!targetRef.isValid()) {
-                                    return;
-                                }
-
-                                Vector3d currentPosition = transformComponent.getPosition();
-                                if (!currentPosition.equals(lockedPosition)) {
-                                    transformComponent.setPosition(lockedPosition);
-                                }
-                            }, 0, 20, TimeUnit.MILLISECONDS);
-
-                            HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
-                                lockTask.cancel(false);
-                            }, 2000, TimeUnit.MILLISECONDS);
-                        }
-                    }
-                }
-                else {
-                    // Check if the citizen will die from this damage
-                    EntityStatMap statMap = store.getComponent(targetRef, EntityStatsModule.get().getEntityStatMapComponentType());
-                    if (statMap == null) {
-                        return;
-                    }
-
-                    EntityStatValue healthValue = statMap.get(DefaultEntityStatTypes.getHealth());
-                    if (healthValue == null) {
-                        return;
-                    }
-
-                    float currentHealth = healthValue.get();
-                    float damageAmount = event.getAmount();
-
-                    if (currentHealth - damageAmount <= 0) {
-                        long now = System.currentTimeMillis();
-
-                        if (!citizen.isAwaitingRespawn()) {
-                            // Fire death event
-                            CitizenDeathEvent deathEvent = new CitizenDeathEvent(citizen, attackerPlayerRef);
-                            plugin.getCitizensManager().fireCitizenDeathEvent(deathEvent);
-
-                            if (deathEvent.isCancelled()) {
-                                event.setCancelled(true);
-                                event.setAmount(0);
+                        ScheduledFuture<?> lockTask = HytaleServer.SCHEDULED_EXECUTOR.scheduleAtFixedRate(() -> {
+                            if (!targetRef.isValid()) {
                                 return;
                             }
 
-                            // Handle death config (drops, commands, messages)
-                            DeathConfig dc = citizen.getDeathConfig();
-                            handleDeathCommands(citizen, dc, attackerPlayerRef);
-                            handleDeathMessages(citizen, dc, attackerPlayerRef);
-
-                            Ref<EntityStore> deathNpcRef = citizen.getNpcRef();
-                            if (deathNpcRef != null && deathNpcRef.isValid()) {
-                                TransformComponent npcTransformComponent = deathNpcRef.getStore().getComponent(deathNpcRef, TransformComponent.getComponentType());
-                                if (npcTransformComponent != null) {
-                                    handleDeathDrops(citizen, dc, npcTransformComponent.getPosition());
-                                }
+                            Vector3d currentPosition = transformComponent.getPosition();
+                            if (!currentPosition.equals(lockedPosition)) {
+                                transformComponent.setPosition(lockedPosition);
                             }
+                        }, 0, 20, TimeUnit.MILLISECONDS);
 
-                            citizen.setLastDeathTime(now);
-
-                            // Despawn nametag
-                            plugin.getCitizensManager().despawnCitizenHologram(citizen);
-
-                            citizen.setSpawnedUUID(null);
-                            citizen.setNpcRef(null);
-
-                            // Mark for respawn
-                            if (citizen.isRespawnOnDeath()) {
-                                citizen.setAwaitingRespawn(true);
-
-                                HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
-                                    World world = Universe.get().getWorld(citizen.getWorldUUID());
-                                    if (world == null)
-                                        return;
-
-                                    citizen.setAwaitingRespawn(false);
-                                    world.execute(() -> {
-                                        plugin.getCitizensManager().spawnCitizen(citizen, true);
-                                    });
-                                }, (long)(citizen.getRespawnDelaySeconds() * 1000), TimeUnit.MILLISECONDS);
-                            }
-                        }
+                        HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
+                            lockTask.cancel(false);
+                        }, 2000, TimeUnit.MILLISECONDS);
                     }
                 }
+                return;
+            }
 
-                break;
+            targetCitizen.setLastDamageTakenAt(System.currentTimeMillis());
+
+            // Check if the citizen will die from this damage
+            EntityStatMap statMap = store.getComponent(targetRef, EntityStatsModule.get().getEntityStatMapComponentType());
+            if (statMap == null) {
+                return;
+            }
+
+            EntityStatValue healthValue = statMap.get(DefaultEntityStatTypes.getHealth());
+            if (healthValue == null) {
+                return;
+            }
+
+            float currentHealth = healthValue.get();
+            float damageAmount = event.getAmount();
+
+            if (currentHealth - damageAmount <= 0 && !targetCitizen.isAwaitingRespawn()) {
+                long now = System.currentTimeMillis();
+
+                // Fire death event
+                CitizenDeathEvent deathEvent = new CitizenDeathEvent(targetCitizen, attackerPlayerRef);
+                plugin.getCitizensManager().fireCitizenDeathEvent(deathEvent);
+
+                if (deathEvent.isCancelled()) {
+                    event.setCancelled(true);
+                    event.setAmount(0);
+                    return;
+                }
+
+                // Handle death config (drops, commands, messages)
+                DeathConfig dc = targetCitizen.getDeathConfig();
+                handleDeathCommands(targetCitizen, dc, attackerPlayerRef);
+                handleDeathMessages(targetCitizen, dc, attackerPlayerRef);
+
+                TransformComponent npcTransformComponent = store.getComponent(targetRef, TransformComponent.getComponentType());
+                if (npcTransformComponent != null) {
+                    handleDeathDrops(targetCitizen, dc, npcTransformComponent.getPosition());
+                }
+
+                targetCitizen.setLastDeathTime(now);
+
+                if (plugin.getCitizensManager().getPatrolManager() != null) {
+                    plugin.getCitizensManager().getPatrolManager().onCitizenDespawned(targetCitizen.getId());
+                }
+                plugin.getCitizensManager().despawnCitizenHologram(targetCitizen);
+                plugin.getCitizensManager().clearCitizenEntityBinding(targetCitizen);
+
+                // Mark for respawn
+                if (targetCitizen.isRespawnOnDeath()) {
+                    targetCitizen.setAwaitingRespawn(true);
+
+                    HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
+                        World world = Universe.get().getWorld(targetCitizen.getWorldUUID());
+                        if (world == null)
+                            return;
+
+                        targetCitizen.setAwaitingRespawn(false);
+                        world.execute(() -> {
+                            plugin.getCitizensManager().spawnCitizen(targetCitizen, true);
+                        });
+                    }, (long)(targetCitizen.getRespawnDelaySeconds() * 1000), TimeUnit.MILLISECONDS);
+                }
             }
 
         } catch (Exception e) {
@@ -277,6 +201,56 @@ public class EntityDamageListener extends DamageEventSystem {
     private static final Random RANDOM = new Random();
     private static final Pattern PLAYER_NAME_PATTERN = Pattern.compile("\\{PlayerName}", Pattern.CASE_INSENSITIVE);
     private static final Pattern CITIZEN_NAME_PATTERN = Pattern.compile("\\{CitizenName}", Pattern.CASE_INSENSITIVE);
+    private static final Pattern NPC_X_PATTERN = Pattern.compile("\\{NpcX}", Pattern.CASE_INSENSITIVE);
+    private static final Pattern NPC_Y_PATTERN = Pattern.compile("\\{NpcY}", Pattern.CASE_INSENSITIVE);
+    private static final Pattern NPC_Z_PATTERN = Pattern.compile("\\{NpcZ}", Pattern.CASE_INSENSITIVE);
+    private static final UUID NON_PLAYER_CONTEXT_UUID = new UUID(0L, 0L);
+
+    @Nullable
+    private Ref<EntityStore> getAttackerEntityRef(@Nonnull Damage.Source source) {
+        if (source instanceof Damage.ProjectileSource) {
+            return ((Damage.ProjectileSource) source).getRef();
+        }
+
+        if (source instanceof Damage.EntitySource) {
+            return ((Damage.EntitySource) source).getRef();
+        }
+
+        return null;
+    }
+
+    @Nullable
+    private UUID getEntityUuid(@Nullable Ref<EntityStore> entityRef) {
+        if (entityRef == null || !entityRef.isValid()) {
+            return null;
+        }
+
+        UUIDComponent uuidComponent = entityRef.getStore().getComponent(entityRef, UUIDComponent.getComponentType());
+        if (uuidComponent == null) {
+            return null;
+        }
+        return uuidComponent.getUuid();
+    }
+
+    @Nullable
+    private CitizenData findCitizenByEntity(@Nonnull List<CitizenData> citizens,
+                                            @Nullable Ref<EntityStore> entityRef,
+                                            @Nullable UUID entityUuid) {
+        for (CitizenData citizen : citizens) {
+            if (entityRef != null && entityRef.isValid()
+                    && citizen.getNpcRef() != null
+                    && citizen.getNpcRef().isValid()
+                    && citizen.getNpcRef().equals(entityRef)) {
+                return citizen;
+            }
+
+            if (entityUuid != null && entityUuid.equals(citizen.getSpawnedUUID())) {
+                return citizen;
+            }
+        }
+
+        return null;
+    }
 
     private void handleDeathDrops(@Nonnull CitizenData citizen, @Nonnull DeathConfig dc, Vector3d position) {
         List<DeathDropItem> drops = dc.getDropItems();
@@ -284,18 +258,41 @@ public class EntityDamageListener extends DamageEventSystem {
             return;
         }
 
+        List<DeathDropItem> eligible = drops.stream()
+                .filter(drop -> drop.getItemId() != null && !drop.getItemId().isEmpty())
+                .filter(drop -> RANDOM.nextFloat() * 100.0f <= drop.getChancePercent())
+                .collect(java.util.stream.Collectors.toList());
+
+        if (eligible.isEmpty()) {
+            return;
+        }
+
+        int desiredCount = resolveDesiredCount(
+                dc.getDropCountMin(),
+                dc.getDropCountMax(),
+                eligible.size(),
+                "ALL"
+        );
+
+        List<DeathDropItem> toDrop = new ArrayList<>(eligible);
+        if (desiredCount < toDrop.size()) {
+            Collections.shuffle(toDrop, RANDOM);
+            toDrop = new ArrayList<>(toDrop.subList(0, desiredCount));
+        }
+
         World world = Universe.get().getWorld(citizen.getWorldUUID());
         if (world == null) {
             return;
         }
 
+        List<DeathDropItem> finalToDrop = toDrop;
         world.execute(() -> {
             ComponentAccessor<EntityStore> accessor = world.getEntityStore().getStore();
             if (accessor == null) {
                 return;
             }
 
-            for (DeathDropItem drop : drops) {
+            for (DeathDropItem drop : finalToDrop) {
                 if (drop.getItemId().isEmpty()) {
                     continue;
                 }
@@ -311,27 +308,36 @@ public class EntityDamageListener extends DamageEventSystem {
     }
 
     private void handleDeathCommands(@Nonnull CitizenData citizen, @Nonnull DeathConfig dc,
-                                     @Nonnull PlayerRef attackerPlayerRef) {
+                                     @Nullable PlayerRef attackerPlayerRef) {
         List<CommandAction> commands = dc.getDeathCommands();
         if (commands.isEmpty()) {
             return;
         }
 
-        // Todo: Make it possible for commands to run even if a player doesn't kill the citizen
-
-        Ref<EntityStore> attackerRef = attackerPlayerRef.getReference();
+        UUID selectionContextUuid = attackerPlayerRef != null ? attackerPlayerRef.getUuid() : NON_PLAYER_CONTEXT_UUID;
+        Ref<EntityStore> attackerRef = attackerPlayerRef != null ? attackerPlayerRef.getReference() : null;
         Player player = null;
         if (attackerRef != null && attackerRef.isValid()) {
             player = attackerRef.getStore().getComponent(attackerRef, Player.getComponentType());
         }
         final Player commandPlayer = player;
 
-        List<CommandAction> toRun;
-        if ("RANDOM".equals(dc.getCommandSelectionMode())) {
-            toRun = List.of(commands.get(RANDOM.nextInt(commands.size())));
-        } else {
-            toRun = commands;
+        List<CommandAction> eligible = commands.stream()
+                .filter(cmd -> RANDOM.nextFloat() * 100.0f <= cmd.getChancePercent())
+                .filter(cmd -> attackerPlayerRef != null || !containsPlayerPlaceholder(cmd.getCommand()))
+                .collect(java.util.stream.Collectors.toList());
+        if (eligible.isEmpty()) {
+            return;
         }
+
+        List<CommandAction> toRun = selectCommandsByModeAndCount(
+                eligible,
+                dc.getCommandSelectionMode(),
+                citizen.getSequentialDeathCommandIndex(),
+                selectionContextUuid,
+                dc.getCommandCountMin(),
+                dc.getCommandCountMax()
+        );
 
         CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
         for (CommandAction cmd : toRun) {
@@ -344,15 +350,12 @@ public class EntityDamageListener extends DamageEventSystem {
                 }
                 return CompletableFuture.completedFuture(null);
             }).thenCompose(v -> {
-                String command = cmd.getCommand();
-                command = PLAYER_NAME_PATTERN
-                        .matcher(command)
-                        .replaceAll(Matcher.quoteReplacement(attackerPlayerRef.getUsername()));
-                command = CITIZEN_NAME_PATTERN
-                        .matcher(command)
-                        .replaceAll(Matcher.quoteReplacement(citizen.getName()));
+                String command = replacePlaceholders(cmd.getCommand(), attackerPlayerRef, citizen);
 
                 if (command.startsWith("{SendMessage}")) {
+                    if (attackerPlayerRef == null) {
+                        return CompletableFuture.completedFuture(null);
+                    }
                     String messageContent = command.substring("{SendMessage}".length()).trim();
                     Message msg = CitizenInteraction.parseColoredMessage(messageContent);
                     if (msg != null) {
@@ -375,43 +378,52 @@ public class EntityDamageListener extends DamageEventSystem {
     }
 
     private void handleDeathMessages(@Nonnull CitizenData citizen, @Nonnull DeathConfig dc,
-                                     @Nonnull PlayerRef attackerPlayerRef) {
+                                     @Nullable PlayerRef attackerPlayerRef) {
+        if (attackerPlayerRef == null) {
+            return;
+        }
+
         List<CitizenMessage> messages = dc.getDeathMessages();
         if (messages.isEmpty()) {
             return;
         }
 
-        if ("RANDOM".equals(dc.getMessageSelectionMode())) {
-            CitizenMessage selected = messages.get(RANDOM.nextInt(messages.size()));
-            dispatchDeathMessage(citizen, attackerPlayerRef, selected);
-        } else {
-            CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
-            for (CitizenMessage msg : messages) {
-                if (msg.getDelaySeconds() > 0) {
-                    chain = chain.thenCompose(v -> {
-                        CompletableFuture<Void> delayed = new CompletableFuture<>();
-                        HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> delayed.complete(null),
-                                (long) (msg.getDelaySeconds() * 1000), TimeUnit.MILLISECONDS);
-                        return delayed;
-                    });
-                }
+        List<CitizenMessage> eligible = messages.stream()
+                .filter(msg -> RANDOM.nextFloat() * 100.0f <= msg.getChancePercent())
+                .collect(java.util.stream.Collectors.toList());
+        if (eligible.isEmpty()) {
+            return;
+        }
+
+        List<CitizenMessage> toSend = selectMessagesByModeAndCount(
+                eligible,
+                dc.getMessageSelectionMode(),
+                citizen.getSequentialDeathMessageIndex(),
+                attackerPlayerRef.getUuid(),
+                dc.getMessageCountMin(),
+                dc.getMessageCountMax()
+        );
+
+        CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
+        for (CitizenMessage msg : toSend) {
+            if (msg.getDelaySeconds() > 0) {
                 chain = chain.thenCompose(v -> {
-                    dispatchDeathMessage(citizen, attackerPlayerRef, msg);
-                    return CompletableFuture.completedFuture(null);
+                    CompletableFuture<Void> delayed = new CompletableFuture<>();
+                    HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> delayed.complete(null),
+                            (long) (msg.getDelaySeconds() * 1000), TimeUnit.MILLISECONDS);
+                    return delayed;
                 });
             }
+            chain = chain.thenCompose(v -> {
+                dispatchDeathMessage(citizen, attackerPlayerRef, msg);
+                return CompletableFuture.completedFuture(null);
+            });
         }
     }
 
     private void dispatchDeathMessage(@Nonnull CitizenData citizen, @Nonnull PlayerRef playerRef,
                                       @Nonnull CitizenMessage cm) {
-        String text = cm.getMessage();
-        text = PLAYER_NAME_PATTERN
-                .matcher(text)
-                .replaceAll(Matcher.quoteReplacement(playerRef.getUsername()));
-        text = CITIZEN_NAME_PATTERN
-                .matcher(text)
-                .replaceAll(Matcher.quoteReplacement(citizen.getName()));
+        String text = replacePlaceholders(cm.getMessage(), playerRef, citizen);
 
         Message parsed = CitizenInteraction.parseColoredMessage(text);
         if (parsed == null) {
@@ -426,6 +438,136 @@ public class EntityDamageListener extends DamageEventSystem {
         } else {
             playerRef.sendMessage(parsed);
         }
+    }
+
+    @Nonnull
+    private List<CommandAction> selectCommandsByModeAndCount(@Nonnull List<CommandAction> source,
+                                                             @Nonnull String mode,
+                                                             @Nonnull Map<UUID, Integer> sequentialMap,
+                                                             @Nonnull UUID playerUuid,
+                                                             int minCount,
+                                                             int maxCount) {
+        int desiredCount = resolveDesiredCount(minCount, maxCount, source.size(), mode);
+        if (desiredCount <= 0) {
+            return List.of();
+        }
+
+        String normalized = mode.toUpperCase(Locale.ROOT);
+        if ("RANDOM".equals(normalized)) {
+            List<CommandAction> shuffled = new ArrayList<>(source);
+            Collections.shuffle(shuffled, RANDOM);
+            return new ArrayList<>(shuffled.subList(0, Math.min(desiredCount, shuffled.size())));
+        }
+
+        if ("SEQUENTIAL".equals(normalized)) {
+            List<CommandAction> selected = new ArrayList<>();
+            int start = sequentialMap.getOrDefault(playerUuid, 0);
+            for (int i = 0; i < desiredCount; i++) {
+                selected.add(source.get((start + i) % source.size()));
+            }
+            sequentialMap.put(playerUuid, start + desiredCount);
+            return selected;
+        }
+
+        return new ArrayList<>(source.subList(0, Math.min(desiredCount, source.size())));
+    }
+
+    @Nonnull
+    private List<CitizenMessage> selectMessagesByModeAndCount(@Nonnull List<CitizenMessage> source,
+                                                              @Nonnull String mode,
+                                                              @Nonnull Map<UUID, Integer> sequentialMap,
+                                                              @Nonnull UUID playerUuid,
+                                                              int minCount,
+                                                              int maxCount) {
+        int desiredCount = resolveDesiredCount(minCount, maxCount, source.size(), mode);
+        if (desiredCount <= 0) {
+            return List.of();
+        }
+
+        String normalized = mode.toUpperCase(Locale.ROOT);
+        if ("RANDOM".equals(normalized)) {
+            List<CitizenMessage> shuffled = new ArrayList<>(source);
+            Collections.shuffle(shuffled, RANDOM);
+            return new ArrayList<>(shuffled.subList(0, Math.min(desiredCount, shuffled.size())));
+        }
+
+        if ("SEQUENTIAL".equals(normalized)) {
+            List<CitizenMessage> selected = new ArrayList<>();
+            int start = sequentialMap.getOrDefault(playerUuid, 0);
+            for (int i = 0; i < desiredCount; i++) {
+                selected.add(source.get((start + i) % source.size()));
+            }
+            sequentialMap.put(playerUuid, start + desiredCount);
+            return selected;
+        }
+
+        return new ArrayList<>(source.subList(0, Math.min(desiredCount, source.size())));
+    }
+
+    private int resolveDesiredCount(int minCount, int maxCount, int available, @Nonnull String mode) {
+        if (available <= 0) {
+            return 0;
+        }
+
+        int min = Math.max(0, minCount);
+        int max = Math.max(0, maxCount);
+
+        if (min == 0 && max == 0) {
+            if ("ALL".equalsIgnoreCase(mode)) {
+                return available;
+            }
+            return 1;
+        }
+
+        min = Math.max(1, min);
+        max = Math.max(1, max);
+        if (max < min) {
+            int tmp = max;
+            max = min;
+            min = tmp;
+        }
+
+        int clampedMin = Math.min(min, available);
+        int clampedMax = Math.min(max, available);
+        if (clampedMax < clampedMin) {
+            clampedMax = clampedMin;
+        }
+
+        if (clampedMin == clampedMax) {
+            return clampedMin;
+        }
+        return clampedMin + RANDOM.nextInt(clampedMax - clampedMin + 1);
+    }
+
+    @Nonnull
+    private String replacePlaceholders(@Nonnull String text, @Nullable PlayerRef playerRef, @Nonnull CitizenData citizen) {
+        Vector3d npcPos = citizen.getCurrentPosition() != null ? citizen.getCurrentPosition() : citizen.getPosition();
+        String npcX = String.format(Locale.ROOT, "%.2f", npcPos.x);
+        String npcY = String.format(Locale.ROOT, "%.2f", npcPos.y);
+        String npcZ = String.format(Locale.ROOT, "%.2f", npcPos.z);
+
+        if (playerRef != null) {
+            text = PLAYER_NAME_PATTERN
+                    .matcher(text)
+                    .replaceAll(Matcher.quoteReplacement(playerRef.getUsername()));
+        }
+        text = CITIZEN_NAME_PATTERN
+                .matcher(text)
+                .replaceAll(Matcher.quoteReplacement(citizen.getName()));
+        text = NPC_X_PATTERN
+                .matcher(text)
+                .replaceAll(Matcher.quoteReplacement(npcX));
+        text = NPC_Y_PATTERN
+                .matcher(text)
+                .replaceAll(Matcher.quoteReplacement(npcY));
+        text = NPC_Z_PATTERN
+                .matcher(text)
+                .replaceAll(Matcher.quoteReplacement(npcZ));
+        return text;
+    }
+
+    private boolean containsPlayerPlaceholder(@Nonnull String text) {
+        return PLAYER_NAME_PATTERN.matcher(text).find();
     }
 
     @Nullable

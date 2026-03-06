@@ -8,21 +8,28 @@ public class CitizenMessage {
     @Nullable
     private String interactionTrigger;
     private float delaySeconds;
+    private float chancePercent;
 
     public CitizenMessage(@Nonnull String message) {
-        this(message, "BOTH", 0.0f);
+        this(message, "BOTH", 0.0f, 100.0f);
     }
 
     public CitizenMessage(@Nonnull String message, @Nullable String interactionTrigger, float delaySeconds) {
+        this(message, interactionTrigger, delaySeconds, 100.0f);
+    }
+
+    public CitizenMessage(@Nonnull String message, @Nullable String interactionTrigger, float delaySeconds, float chancePercent) {
         this.message = message;
         this.interactionTrigger = interactionTrigger;
         this.delaySeconds = delaySeconds;
+        this.chancePercent = chancePercent;
     }
 
     public CitizenMessage() {
         this.message = "";
         this.interactionTrigger = "BOTH";
         this.delaySeconds = 0.0f;
+        this.chancePercent = 100.0f;
     }
 
     @Nonnull
@@ -49,6 +56,14 @@ public class CitizenMessage {
 
     public void setDelaySeconds(float delaySeconds) {
         this.delaySeconds = delaySeconds;
+    }
+
+    public float getChancePercent() {
+        return chancePercent;
+    }
+
+    public void setChancePercent(float chancePercent) {
+        this.chancePercent = chancePercent;
     }
 
     public boolean isTriggeredBy(@Nonnull String interactionSource) {

@@ -249,6 +249,10 @@
       "Value": "Hostile",
       "Description": "Default attitude towards players."
     },
+    "DefaultNPCAttitude": {
+      "Value": "Ignore",
+      "Description": "Default attitude towards NPCs."
+    },
     "FlockArray": {
       "Value": [ ],
       "TypeHint": "String",
@@ -261,6 +265,10 @@
     "MaxHealth": {
       "Value": 100,
       "Description": "Max health for the NPC."
+    },
+    "KnockbackScale": {
+      "Value": 0.5,
+      "Description": "Scale factor for knockback."
     },
     "ConfusedTimeRange": {
       "Value": [ 1, 2 ],
@@ -303,7 +311,7 @@
   "OffHandItems": { "Compute": "OffHand" },
   "DefaultOffHandSlot": { "Compute": "DefaultOffHandSlot" },
   "OffHandSlots": 2,
-  "DefaultNPCAttitude": "Ignore",
+  "DefaultNPCAttitude": { "Compute": "DefaultNPCAttitude" },
   "DefaultPlayerAttitude": { "Compute": "DefaultPlayerAttitude" },
   "AttitudeGroup": { "Compute": "AttitudeGroup" },
   "FlockSpawnTypes": { "Compute": "FlockArray" },
@@ -315,7 +323,7 @@
   "SeparationNearRadiusTarget": 2,
   "SeparationFarRadiusTarget": 7,
   "BusyStates": [ "Combat", "ReturnHome", "Alerted", "Search" ],
-  "KnockbackScale": 0.5,
+  "KnockbackScale": { "Compute": "KnockbackScale" },
   "MotionControllerList": [
     {
       "Type": "Walk",

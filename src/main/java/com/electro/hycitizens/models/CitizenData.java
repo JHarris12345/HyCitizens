@@ -13,6 +13,7 @@ import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -35,6 +36,7 @@ public class CitizenData {
     private Ref<EntityStore> npcRef;
     public final Map<UUID, Direction> lastLookDirections = new ConcurrentHashMap<>();
     private boolean rotateTowardsPlayer;
+    private float lookAtDistance = 25.0f;
     private boolean hideNametag = false;
     private boolean hideNpc = false;
     private float nametagOffset;
@@ -62,10 +64,23 @@ public class CitizenData {
     private MovementBehavior movementBehavior = new MovementBehavior();
     private MessagesConfig messagesConfig = new MessagesConfig();
     private DeathConfig deathConfig = new DeathConfig();
+    private String commandSelectionMode = "ALL";
     private transient Map<UUID, Integer> sequentialMessageIndex = new ConcurrentHashMap<>();
+    private transient Map<UUID, Integer> sequentialCommandIndex = new ConcurrentHashMap<>();
+    private transient Map<UUID, Integer> sequentialDeathMessageIndex = new ConcurrentHashMap<>();
+    private transient Map<UUID, Integer> sequentialDeathCommandIndex = new ConcurrentHashMap<>();
     private transient Map<UUID, Boolean> playersInProximity = new ConcurrentHashMap<>();
     private transient Map<String, Long> lastTimedAnimationPlay = new ConcurrentHashMap<>();
     private transient Map<String, java.util.concurrent.ScheduledFuture<?>> animationStopTasks = new ConcurrentHashMap<>();
+    private boolean firstInteractionEnabled = false;
+    private List<CommandAction> firstInteractionCommandActions = new ArrayList<>();
+    private MessagesConfig firstInteractionMessagesConfig = new MessagesConfig();
+    private String firstInteractionCommandSelectionMode = "ALL";
+    private String postFirstInteractionBehavior = "NORMAL";
+    private boolean runNormalOnFirstInteraction = false;
+    private Set<UUID> playersWhoCompletedFirstInteraction = ConcurrentHashMap.newKeySet();
+    private transient Map<UUID, Integer> sequentialFirstInteractionMessageIndex = new ConcurrentHashMap<>();
+    private transient Map<UUID, Integer> sequentialFirstInteractionCommandIndex = new ConcurrentHashMap<>();
 
     // Attitude and damage fields
     private String attitude = "PASSIVE";
@@ -74,6 +89,12 @@ public class CitizenData {
     private float healthAmount = 100;
     private boolean overrideDamage = false;
     private float damageAmount = 10;
+    private boolean healthRegenEnabled = false;
+    private float healthRegenAmount = 1.0f;
+    private float healthRegenIntervalSeconds = 5.0f;
+    private float healthRegenDelayAfterDamageSeconds = 5.0f;
+    private transient long lastDamageTakenAt = 0L;
+    private transient long lastHealthRegenAt = 0L;
 
     // Respawn fields
     private boolean respawnOnDeath = true;
@@ -300,6 +321,14 @@ public class CitizenData {
         this.rotateTowardsPlayer = rotateTowardsPlayer;
     }
 
+    public float getLookAtDistance() {
+        return lookAtDistance;
+    }
+
+    public void setLookAtDistance(float lookAtDistance) {
+        this.lookAtDistance = lookAtDistance;
+    }
+
     public boolean isPlayerModel() {
         return isPlayerModel;
     }
@@ -480,8 +509,32 @@ public class CitizenData {
     public void setDeathConfig(@Nonnull DeathConfig deathConfig) { this.deathConfig = deathConfig; }
 
     @Nonnull
+    public String getCommandSelectionMode() {
+        return commandSelectionMode;
+    }
+
+    public void setCommandSelectionMode(@Nonnull String commandSelectionMode) {
+        this.commandSelectionMode = commandSelectionMode;
+    }
+
+    @Nonnull
     public Map<UUID, Integer> getSequentialMessageIndex() {
         return sequentialMessageIndex;
+    }
+
+    @Nonnull
+    public Map<UUID, Integer> getSequentialCommandIndex() {
+        return sequentialCommandIndex;
+    }
+
+    @Nonnull
+    public Map<UUID, Integer> getSequentialDeathMessageIndex() {
+        return sequentialDeathMessageIndex;
+    }
+
+    @Nonnull
+    public Map<UUID, Integer> getSequentialDeathCommandIndex() {
+        return sequentialDeathCommandIndex;
     }
 
     @Nonnull
@@ -497,6 +550,79 @@ public class CitizenData {
     @Nonnull
     public Map<String, java.util.concurrent.ScheduledFuture<?>> getAnimationStopTasks() {
         return animationStopTasks;
+    }
+
+    public boolean isFirstInteractionEnabled() {
+        return firstInteractionEnabled;
+    }
+
+    public void setFirstInteractionEnabled(boolean firstInteractionEnabled) {
+        this.firstInteractionEnabled = firstInteractionEnabled;
+    }
+
+    @Nonnull
+    public List<CommandAction> getFirstInteractionCommandActions() {
+        return new ArrayList<>(firstInteractionCommandActions);
+    }
+
+    public void setFirstInteractionCommandActions(@Nonnull List<CommandAction> firstInteractionCommandActions) {
+        this.firstInteractionCommandActions = new ArrayList<>(firstInteractionCommandActions);
+    }
+
+    @Nonnull
+    public MessagesConfig getFirstInteractionMessagesConfig() {
+        return firstInteractionMessagesConfig;
+    }
+
+    public void setFirstInteractionMessagesConfig(@Nonnull MessagesConfig firstInteractionMessagesConfig) {
+        this.firstInteractionMessagesConfig = firstInteractionMessagesConfig;
+    }
+
+    @Nonnull
+    public String getFirstInteractionCommandSelectionMode() {
+        return firstInteractionCommandSelectionMode;
+    }
+
+    public void setFirstInteractionCommandSelectionMode(@Nonnull String firstInteractionCommandSelectionMode) {
+        this.firstInteractionCommandSelectionMode = firstInteractionCommandSelectionMode;
+    }
+
+    @Nonnull
+    public String getPostFirstInteractionBehavior() {
+        return postFirstInteractionBehavior;
+    }
+
+    public void setPostFirstInteractionBehavior(@Nonnull String postFirstInteractionBehavior) {
+        this.postFirstInteractionBehavior = postFirstInteractionBehavior;
+    }
+
+    public boolean isRunNormalOnFirstInteraction() {
+        return runNormalOnFirstInteraction;
+    }
+
+    public void setRunNormalOnFirstInteraction(boolean runNormalOnFirstInteraction) {
+        this.runNormalOnFirstInteraction = runNormalOnFirstInteraction;
+    }
+
+    @Nonnull
+    public Set<UUID> getPlayersWhoCompletedFirstInteraction() {
+        return playersWhoCompletedFirstInteraction;
+    }
+
+    public void setPlayersWhoCompletedFirstInteraction(@Nonnull Set<UUID> playersWhoCompletedFirstInteraction) {
+        Set<UUID> copy = ConcurrentHashMap.newKeySet();
+        copy.addAll(playersWhoCompletedFirstInteraction);
+        this.playersWhoCompletedFirstInteraction = copy;
+    }
+
+    @Nonnull
+    public Map<UUID, Integer> getSequentialFirstInteractionMessageIndex() {
+        return sequentialFirstInteractionMessageIndex;
+    }
+
+    @Nonnull
+    public Map<UUID, Integer> getSequentialFirstInteractionCommandIndex() {
+        return sequentialFirstInteractionCommandIndex;
     }
 
     @Nonnull
@@ -527,6 +653,24 @@ public class CitizenData {
 
     public float getDamageAmount() { return damageAmount; }
     public void setDamageAmount(float damageAmount) { this.damageAmount = damageAmount; }
+
+    public boolean isHealthRegenEnabled() { return healthRegenEnabled; }
+    public void setHealthRegenEnabled(boolean healthRegenEnabled) { this.healthRegenEnabled = healthRegenEnabled; }
+
+    public float getHealthRegenAmount() { return healthRegenAmount; }
+    public void setHealthRegenAmount(float healthRegenAmount) { this.healthRegenAmount = healthRegenAmount; }
+
+    public float getHealthRegenIntervalSeconds() { return healthRegenIntervalSeconds; }
+    public void setHealthRegenIntervalSeconds(float healthRegenIntervalSeconds) { this.healthRegenIntervalSeconds = healthRegenIntervalSeconds; }
+
+    public float getHealthRegenDelayAfterDamageSeconds() { return healthRegenDelayAfterDamageSeconds; }
+    public void setHealthRegenDelayAfterDamageSeconds(float healthRegenDelayAfterDamageSeconds) { this.healthRegenDelayAfterDamageSeconds = healthRegenDelayAfterDamageSeconds; }
+
+    public long getLastDamageTakenAt() { return lastDamageTakenAt; }
+    public void setLastDamageTakenAt(long lastDamageTakenAt) { this.lastDamageTakenAt = lastDamageTakenAt; }
+
+    public long getLastHealthRegenAt() { return lastHealthRegenAt; }
+    public void setLastHealthRegenAt(long lastHealthRegenAt) { this.lastHealthRegenAt = lastHealthRegenAt; }
 
     public boolean isRespawnOnDeath() {
         return respawnOnDeath;

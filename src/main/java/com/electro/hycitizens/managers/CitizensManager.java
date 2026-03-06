@@ -1,10 +1,14 @@
 package com.electro.hycitizens.managers;
 
 import com.electro.hycitizens.HyCitizensPlugin;
+import com.electro.hycitizens.events.CitizenAddedEvent;
+import com.electro.hycitizens.events.CitizenAddedListener;
 import com.electro.hycitizens.events.CitizenDeathEvent;
 import com.electro.hycitizens.events.CitizenDeathListener;
 import com.electro.hycitizens.events.CitizenInteractEvent;
 import com.electro.hycitizens.events.CitizenInteractListener;
+import com.electro.hycitizens.events.CitizenRemovedEvent;
+import com.electro.hycitizens.events.CitizenRemovedListener;
 import com.electro.hycitizens.models.*;
 import com.electro.hycitizens.roles.RoleGenerator;
 import com.electro.hycitizens.util.ConfigManager;
@@ -80,12 +84,16 @@ public class CitizensManager {
     private final HyCitizensPlugin plugin;
     private final ConfigManager config;
     private final Map<String, CitizenData> citizens;
+    private final List<CitizenAddedListener> addedListeners = new ArrayList<>();
+    private final List<CitizenRemovedListener> removedListeners = new ArrayList<>();
     private final List<CitizenInteractListener> interactListeners = new ArrayList<>();
     private final List<CitizenDeathListener> deathListeners = new ArrayList<>();
     private ScheduledFuture<?> skinUpdateTask;
     private ScheduledFuture<?> rotateTask;
     private ScheduledFuture<?> nametagMoveTask;
     private ScheduledFuture<?> animationTask;
+    private ScheduledFuture<?> healthRegenTask;
+    private ScheduledFuture<?> npcRefReconcileTask;
     private final Map<UUID, List<CitizenData>> citizensByWorld = new HashMap<>();
     private final Set<String> groups = new HashSet<>();
     private final Set<String> registeredNoLoopAnimations = ConcurrentHashMap.newKeySet();
@@ -108,7 +116,9 @@ public class CitizensManager {
         startSkinUpdateScheduler();
         startRotateScheduler();
         startCitizensByWorldScheduler();
+        startNpcRefReconcileScheduler();
         startAnimationScheduler();
+        startHealthRegenScheduler();
         startNametagMoveScheduler();
         startPositionSaveScheduler();
         this.patrolManager = new PatrolManager(plugin.getConfigManager(), this);
@@ -172,7 +182,7 @@ public class CitizensManager {
                             continue;
 
                         for (PlayerRef playerRef : players) {
-                            float maxDistance = 25.0f;
+                            float maxDistance = Math.max(0.0f, citizen.getLookAtDistance());
                             float maxDistanceSq = maxDistance * maxDistance;
 
                             double dx = playerRef.getTransform().getPosition().x - citizenPos.x;
@@ -323,6 +333,57 @@ public class CitizensManager {
         }, 0, 1000, TimeUnit.MILLISECONDS);
     }
 
+    private void startNpcRefReconcileScheduler() {
+        npcRefReconcileTask = HytaleServer.SCHEDULED_EXECUTOR.scheduleAtFixedRate(() -> {
+            Map<UUID, List<CitizenData>> unresolvedByWorld = new HashMap<>();
+
+            for (CitizenData citizen : citizens.values()) {
+                if (citizen.getSpawnedUUID() == null) {
+                    continue;
+                }
+
+                Ref<EntityStore> npcRef = citizen.getNpcRef();
+                if (npcRef != null && npcRef.isValid()) {
+                    continue;
+                }
+
+                unresolvedByWorld.computeIfAbsent(citizen.getWorldUUID(), k -> new ArrayList<>()).add(citizen);
+            }
+
+            for (Map.Entry<UUID, List<CitizenData>> entry : unresolvedByWorld.entrySet()) {
+                UUID worldUUID = entry.getKey();
+                List<CitizenData> unresolvedCitizens = entry.getValue();
+                World world = Universe.get().getWorld(worldUUID);
+                if (world == null) {
+                    continue;
+                }
+
+                world.execute(() -> {
+                    for (CitizenData citizen : unresolvedCitizens) {
+                        UUID npcUuid = citizen.getSpawnedUUID();
+                        if (npcUuid == null) {
+                            continue;
+                        }
+
+                        Ref<EntityStore> resolvedRef = world.getEntityRef(npcUuid);
+                        if (resolvedRef == null || !resolvedRef.isValid()) {
+                            continue;
+                        }
+
+                        bindCitizenEntityBinding(citizen, resolvedRef);
+                        setInteractionComponent(resolvedRef.getStore(), resolvedRef, citizen);
+                        applyNpcNameplateComponent(resolvedRef.getStore(), resolvedRef, citizen);
+                        triggerAnimations(citizen, "DEFAULT");
+
+                        if (patrolManager != null && shouldAutoStartPluginPatrol(citizen) && !patrolManager.isPatrolling(citizen.getId())) {
+                            patrolManager.startPatrol(citizen.getId(), citizen.getPathConfig().getPluginPatrolPath());
+                        }
+                    }
+                });
+            }
+        }, 1, 1, TimeUnit.SECONDS);
+    }
+
     // Todo: move position saving to chunk unload event when it becomes available
     private void startPositionSaveScheduler() {
         positionSaveTask = HytaleServer.SCHEDULED_EXECUTOR.scheduleAtFixedRate(() -> {
@@ -344,6 +405,68 @@ public class CitizensManager {
         }, 5, 5, TimeUnit.SECONDS);
     }
 
+    private void startHealthRegenScheduler() {
+        healthRegenTask = HytaleServer.SCHEDULED_EXECUTOR.scheduleAtFixedRate(() -> {
+            long now = System.currentTimeMillis();
+
+            for (CitizenData citizen : citizens.values()) {
+                if (!citizen.isHealthRegenEnabled()) {
+                    continue;
+                }
+                if (citizen.getNpcRef() == null || !citizen.getNpcRef().isValid()) {
+                    continue;
+                }
+                if (citizen.getHealthRegenAmount() <= 0.0f || citizen.getHealthRegenIntervalSeconds() <= 0.0f) {
+                    continue;
+                }
+
+                long sinceLastDamage = now - citizen.getLastDamageTakenAt();
+                long delayMs = (long) (citizen.getHealthRegenDelayAfterDamageSeconds() * 1000L);
+                if (sinceLastDamage < delayMs) {
+                    continue;
+                }
+
+                long sinceLastRegen = now - citizen.getLastHealthRegenAt();
+                long intervalMs = (long) (citizen.getHealthRegenIntervalSeconds() * 1000L);
+                if (sinceLastRegen < intervalMs) {
+                    continue;
+                }
+
+                World world = Universe.get().getWorld(citizen.getWorldUUID());
+                if (world == null) {
+                    continue;
+                }
+
+                world.execute(() -> {
+                    Ref<EntityStore> npcRef = citizen.getNpcRef();
+                    if (npcRef == null || !npcRef.isValid()) {
+                        return;
+                    }
+
+                    EntityStatMap statMap = npcRef.getStore().getComponent(npcRef, EntityStatsModule.get().getEntityStatMapComponentType());
+                    if (statMap == null) {
+                        return;
+                    }
+
+                    EntityStatValue healthStat = statMap.get(DefaultEntityStatTypes.getHealth());
+                    if (healthStat == null) {
+                        return;
+                    }
+
+                    float currentHealth = healthStat.get();
+                    float maxHealth = healthStat.getMax();
+                    if (currentHealth >= maxHealth) {
+                        return;
+                    }
+
+                    float nextHealth = Math.min(maxHealth, currentHealth + citizen.getHealthRegenAmount());
+                    setHealthValueClamped(statMap, nextHealth);
+                    citizen.setLastHealthRegenAt(System.currentTimeMillis());
+                });
+            }
+        }, 1, 1, TimeUnit.SECONDS);
+    }
+
     public void shutdown() {
         if (skinUpdateTask != null && !skinUpdateTask.isCancelled()) {
             skinUpdateTask.cancel(false);
@@ -357,12 +480,20 @@ public class CitizensManager {
             animationTask.cancel(false);
         }
 
+        if (healthRegenTask != null && !healthRegenTask.isCancelled()) {
+            healthRegenTask.cancel(false);
+        }
+
         if (nametagMoveTask != null && !nametagMoveTask.isCancelled()) {
             nametagMoveTask.cancel(false);
         }
 
         if (positionSaveTask != null && !positionSaveTask.isCancelled()) {
             positionSaveTask.cancel(false);
+        }
+
+        if (npcRefReconcileTask != null && !npcRefReconcileTask.isCancelled()) {
+            npcRefReconcileTask.cancel(false);
         }
 
         if (patrolManager != null) {
@@ -444,17 +575,19 @@ public class CitizensManager {
         // Load command actions
         List<CommandAction> actions = new ArrayList<>();
         int commandCount = config.getInt(basePath + ".commands.count", 0);
+        String commandSelectionMode = config.getString(basePath + ".commands.mode", "ALL");
 
         for (int i = 0; i < commandCount; i++) {
             String commandPath = basePath + ".commands." + i;
             String command = config.getString(commandPath + ".command");
             boolean runAsServer = config.getBoolean(commandPath + ".run-as-server", false);
             float delay = config.getFloat(commandPath + ".delay", 0.0f);
+            float chancePercent = config.getFloat(commandPath + ".chance", 100.0f);
             // null = not yet set, will be migrated below
             String trigger = config.getString(commandPath + ".interaction-trigger", null);
 
             if (command != null) {
-                actions.add(new CommandAction(command, runAsServer, delay, trigger));
+                actions.add(new CommandAction(command, runAsServer, delay, trigger, chancePercent));
             }
         }
 
@@ -476,6 +609,7 @@ public class CitizensManager {
         }
 
         boolean rotateTowardsPlayer = config.getBoolean(basePath + ".rotate-towards-player", false);
+        float lookAtDistance = config.getFloat(basePath + ".look-at-distance", 25.0f);
 
         // Load skin data
         boolean isPlayerModel = config.getBoolean(basePath + ".is-player-model", false);
@@ -487,6 +621,8 @@ public class CitizensManager {
         CitizenData citizenData = new CitizenData(citizenId, name, modelId, worldUUID, position, rotation, scale, npcUUID, hologramUuids,
                 permission, permMessage, actions, isPlayerModel, useLiveSkin, skinUsername, cachedSkin, lastSkinUpdate, rotateTowardsPlayer);
         citizenData.setCreatedAt(0); // Mark as loaded from config, not newly created
+        citizenData.setCommandSelectionMode(commandSelectionMode);
+        citizenData.setLookAtDistance(lookAtDistance);
 
         Vector3d currentPosition = config.getVector3d(basePath + ".current-position");
         if (currentPosition == null) {
@@ -548,7 +684,8 @@ public class CitizensManager {
             // null = not yet set, will be migrated below
             String msgTrigger = config.getString(msgPath + ".interaction-trigger", null);
             float msgDelay = config.getFloat(msgPath + ".delay", 0.0f);
-            messages.add(new CitizenMessage(msg, msgTrigger, msgDelay));
+            float msgChance = config.getFloat(msgPath + ".chance", 100.0f);
+            messages.add(new CitizenMessage(msg, msgTrigger, msgDelay, msgChance));
         }
         citizenData.setMessagesConfig(new MessagesConfig(messages, msgMode, msgEnabled));
 
@@ -594,6 +731,12 @@ public class CitizensManager {
         DeathConfig deathConfig = new DeathConfig();
         deathConfig.setCommandSelectionMode(config.getString(basePath + ".death.command-mode", "ALL"));
         deathConfig.setMessageSelectionMode(config.getString(basePath + ".death.message-mode", "ALL"));
+        deathConfig.setDropCountMin(config.getInt(basePath + ".death.drop-count-min", 0));
+        deathConfig.setDropCountMax(config.getInt(basePath + ".death.drop-count-max", 0));
+        deathConfig.setCommandCountMin(config.getInt(basePath + ".death.command-count-min", 0));
+        deathConfig.setCommandCountMax(config.getInt(basePath + ".death.command-count-max", 0));
+        deathConfig.setMessageCountMin(config.getInt(basePath + ".death.message-count-min", 0));
+        deathConfig.setMessageCountMax(config.getInt(basePath + ".death.message-count-max", 0));
 
         List<DeathDropItem> drops = new ArrayList<>();
 
@@ -602,9 +745,10 @@ public class CitizensManager {
 
             String itemId = config.getString(dropPath + ".item-id", "");
             int quantity = config.getInt(dropPath + ".quantity", 1);
+            float chancePercent = config.getFloat(dropPath + ".chance", 100.0f);
 
             if (!itemId.isEmpty()) {
-                drops.add(new DeathDropItem(itemId, quantity));
+                drops.add(new DeathDropItem(itemId, quantity, chancePercent));
             }
         }
 
@@ -621,9 +765,10 @@ public class CitizensManager {
             String cmd = config.getString(cmdPath + ".command", "");
             boolean runAsServer = config.getBoolean(cmdPath + ".run-as-server", true);
             float delay = config.getFloat(cmdPath + ".delay", 0);
+            float chance = config.getFloat(cmdPath + ".chance", 100.0f);
 
             if (!cmd.isEmpty()) {
-                deathCommands.add(new CommandAction(cmd, runAsServer, delay));
+                deathCommands.add(new CommandAction(cmd, runAsServer, delay, chance));
             }
         }
 
@@ -639,9 +784,10 @@ public class CitizensManager {
 
             String msg = config.getString(msgPath + ".message", "");
             float delay = config.getFloat(msgPath + ".delay", 0);
+            float chance = config.getFloat(msgPath + ".chance", 100.0f);
 
             if (!msg.isEmpty()) {
-                deathMessages.add(new CitizenMessage(msg, null, delay));
+                deathMessages.add(new CitizenMessage(msg, null, delay, chance));
             }
         }
 
@@ -650,6 +796,53 @@ public class CitizensManager {
         }
 
         citizenData.setDeathConfig(deathConfig);
+
+        // Load first interaction config
+        citizenData.setFirstInteractionEnabled(config.getBoolean(basePath + ".first-interaction.enabled", false));
+        String firstCommandMode = config.getString(basePath + ".first-interaction.commands.mode", "ALL");
+        if (!"ALL".equalsIgnoreCase(firstCommandMode) && !"RANDOM".equalsIgnoreCase(firstCommandMode)) {
+            firstCommandMode = "RANDOM";
+        } else {
+            firstCommandMode = firstCommandMode.toUpperCase(Locale.ROOT);
+        }
+        citizenData.setFirstInteractionCommandSelectionMode(firstCommandMode);
+        citizenData.setPostFirstInteractionBehavior(config.getString(basePath + ".first-interaction.post-behavior", "NORMAL"));
+        citizenData.setRunNormalOnFirstInteraction(config.getBoolean(basePath + ".first-interaction.run-normal-on-first", false));
+
+        List<CommandAction> firstCommands = new ArrayList<>();
+        int firstCommandCount = config.getInt(basePath + ".first-interaction.commands.count", 0);
+        for (int i = 0; i < firstCommandCount; i++) {
+            String cmdPath = basePath + ".first-interaction.commands." + i;
+            String cmd = config.getString(cmdPath + ".command", "");
+            boolean runAsServer = config.getBoolean(cmdPath + ".run-as-server", false);
+            float delay = config.getFloat(cmdPath + ".delay", 0.0f);
+            String trigger = config.getString(cmdPath + ".interaction-trigger", "BOTH");
+            float chance = config.getFloat(cmdPath + ".chance", 100.0f);
+            if (!cmd.isEmpty()) {
+                firstCommands.add(new CommandAction(cmd, runAsServer, delay, trigger, chance));
+            }
+        }
+        citizenData.setFirstInteractionCommandActions(firstCommands);
+
+        int firstMsgCount = config.getInt(basePath + ".first-interaction.messages.count", 0);
+        String firstMsgModeRaw = config.getString(basePath + ".first-interaction.messages.mode", "RANDOM");
+        String firstMsgMode = "ALL".equalsIgnoreCase(firstMsgModeRaw) ? "ALL" : "RANDOM";
+        boolean firstMsgEnabled = config.getBoolean(basePath + ".first-interaction.messages.enabled", true);
+        List<CitizenMessage> firstMessages = new ArrayList<>();
+        for (int i = 0; i < firstMsgCount; i++) {
+            String msgPath = basePath + ".first-interaction.messages." + i;
+            String msg = config.getString(msgPath + ".message", "");
+            String trigger = config.getString(msgPath + ".interaction-trigger", "BOTH");
+            float delay = config.getFloat(msgPath + ".delay", 0.0f);
+            float chance = config.getFloat(msgPath + ".chance", 100.0f);
+            firstMessages.add(new CitizenMessage(msg, trigger, delay, chance));
+        }
+        citizenData.setFirstInteractionMessagesConfig(new MessagesConfig(firstMessages, firstMsgMode, firstMsgEnabled));
+
+        List<UUID> firstPlayers = config.getUUIDList(basePath + ".first-interaction.completed-players");
+        if (firstPlayers != null && !firstPlayers.isEmpty()) {
+            citizenData.setPlayersWhoCompletedFirstInteraction(new HashSet<>(firstPlayers));
+        }
 
         // Load new config fields
         citizenData.setMaxHealth(config.getFloat(basePath + ".max-health", 100));
@@ -741,6 +934,10 @@ public class CitizensManager {
         citizenData.setDefaultOffHandSlot(config.getInt(basePath + ".default-offhand-slot", -1));
         citizenData.setNighttimeOffhandSlot(config.getInt(basePath + ".nighttime-offhand-slot", 0));
         citizenData.setKnockbackScale(config.getFloat(basePath + ".knockback-scale", 0.5f));
+        citizenData.setHealthRegenEnabled(config.getBoolean(basePath + ".health-regen.enabled", false));
+        citizenData.setHealthRegenAmount(config.getFloat(basePath + ".health-regen.amount", 1.0f));
+        citizenData.setHealthRegenIntervalSeconds(config.getFloat(basePath + ".health-regen.interval-seconds", 5.0f));
+        citizenData.setHealthRegenDelayAfterDamageSeconds(config.getFloat(basePath + ".health-regen.delay-after-damage-seconds", 5.0f));
         List<String> weaponsList = config.getStringList(basePath + ".weapons");
         if (weaponsList != null) citizenData.setWeapons(weaponsList);
         List<String> offHandItemsList = config.getStringList(basePath + ".offhand-items");
@@ -776,6 +973,7 @@ public class CitizensManager {
             config.set(basePath + ".permission", citizen.getRequiredPermission());
             config.set(basePath + ".permission-message", citizen.getNoPermissionMessage());
             config.set(basePath + ".rotate-towards-player", citizen.getRotateTowardsPlayer());
+            config.set(basePath + ".look-at-distance", citizen.getLookAtDistance());
             config.setUUID(basePath + ".npc-uuid", citizen.getSpawnedUUID());
             config.setUUIDList(basePath + ".hologram-uuids", citizen.getHologramLineUuids());
 
@@ -797,6 +995,7 @@ public class CitizensManager {
             // Save command actions
             List<CommandAction> actions = citizen.getCommandActions();
             config.set(basePath + ".commands.count", actions.size());
+            config.set(basePath + ".commands.mode", citizen.getCommandSelectionMode());
 
             for (int i = 0; i < actions.size(); i++) {
                 CommandAction action = actions.get(i);
@@ -807,6 +1006,7 @@ public class CitizensManager {
                 config.set(commandPath + ".delay", action.getDelaySeconds());
                 config.set(commandPath + ".interaction-trigger",
                         action.getInteractionTrigger() != null ? action.getInteractionTrigger() : "BOTH");
+                config.set(commandPath + ".chance", action.getChancePercent());
             }
 
             config.set(basePath + ".force-f-key-interaction-text", citizen.getForceFKeyInteractionText());
@@ -853,6 +1053,7 @@ public class CitizensManager {
                 config.set(msgPath + ".interaction-trigger",
                         cm.getInteractionTrigger() != null ? cm.getInteractionTrigger() : "BOTH");
                 config.set(msgPath + ".delay", cm.getDelaySeconds());
+                config.set(msgPath + ".chance", cm.getChancePercent());
             }
 
             // Save attitude and damage settings
@@ -874,6 +1075,12 @@ public class CitizensManager {
             DeathConfig dc = citizen.getDeathConfig();
             config.set(basePath + ".death.command-mode", dc.getCommandSelectionMode());
             config.set(basePath + ".death.message-mode", dc.getMessageSelectionMode());
+            config.set(basePath + ".death.drop-count-min", dc.getDropCountMin());
+            config.set(basePath + ".death.drop-count-max", dc.getDropCountMax());
+            config.set(basePath + ".death.command-count-min", dc.getCommandCountMin());
+            config.set(basePath + ".death.command-count-max", dc.getCommandCountMax());
+            config.set(basePath + ".death.message-count-min", dc.getMessageCountMin());
+            config.set(basePath + ".death.message-count-max", dc.getMessageCountMax());
 
             List<DeathDropItem> drops = dc.getDropItems();
             config.set(basePath + ".death.drops", new ArrayList<>());
@@ -881,6 +1088,7 @@ public class CitizensManager {
                 String dropPath = basePath + ".death.drops." + i;
                 config.set(dropPath + ".item-id", drops.get(i).getItemId());
                 config.set(dropPath + ".quantity", drops.get(i).getQuantity());
+                config.set(dropPath + ".chance", drops.get(i).getChancePercent());
             }
 
             List<CommandAction> deathCmds = dc.getDeathCommands();
@@ -891,6 +1099,7 @@ public class CitizensManager {
                 config.set(cmdPath + ".command", cmd.getCommand());
                 config.set(cmdPath + ".run-as-server", cmd.isRunAsServer());
                 config.set(cmdPath + ".delay", cmd.getDelaySeconds());
+                config.set(cmdPath + ".chance", cmd.getChancePercent());
             }
 
             List<CitizenMessage> deathMsgs = dc.getDeathMessages();
@@ -900,6 +1109,41 @@ public class CitizensManager {
                 CitizenMessage msg = deathMsgs.get(i);
                 config.set(msgPath + ".message", msg.getMessage());
                 config.set(msgPath + ".delay", msg.getDelaySeconds());
+                config.set(msgPath + ".chance", msg.getChancePercent());
+            }
+
+            // Save first interaction config
+            config.set(basePath + ".first-interaction.enabled", citizen.isFirstInteractionEnabled());
+            config.set(basePath + ".first-interaction.commands.mode", citizen.getFirstInteractionCommandSelectionMode());
+            config.set(basePath + ".first-interaction.post-behavior", citizen.getPostFirstInteractionBehavior());
+            config.set(basePath + ".first-interaction.run-normal-on-first", citizen.isRunNormalOnFirstInteraction());
+            config.setUUIDList(basePath + ".first-interaction.completed-players",
+                    new ArrayList<>(citizen.getPlayersWhoCompletedFirstInteraction()));
+
+            List<CommandAction> firstCommands = citizen.getFirstInteractionCommandActions();
+            config.set(basePath + ".first-interaction.commands.count", firstCommands.size());
+            for (int i = 0; i < firstCommands.size(); i++) {
+                CommandAction cmd = firstCommands.get(i);
+                String cmdPath = basePath + ".first-interaction.commands." + i;
+                config.set(cmdPath + ".command", cmd.getCommand());
+                config.set(cmdPath + ".run-as-server", cmd.isRunAsServer());
+                config.set(cmdPath + ".delay", cmd.getDelaySeconds());
+                config.set(cmdPath + ".interaction-trigger", cmd.getInteractionTrigger() != null ? cmd.getInteractionTrigger() : "BOTH");
+                config.set(cmdPath + ".chance", cmd.getChancePercent());
+            }
+
+            MessagesConfig firstMessagesConfig = citizen.getFirstInteractionMessagesConfig();
+            List<CitizenMessage> firstMessages = firstMessagesConfig.getMessages();
+            config.set(basePath + ".first-interaction.messages.count", firstMessages.size());
+            config.set(basePath + ".first-interaction.messages.mode", firstMessagesConfig.getSelectionMode());
+            config.set(basePath + ".first-interaction.messages.enabled", firstMessagesConfig.isEnabled());
+            for (int i = 0; i < firstMessages.size(); i++) {
+                CitizenMessage msg = firstMessages.get(i);
+                String msgPath = basePath + ".first-interaction.messages." + i;
+                config.set(msgPath + ".message", msg.getMessage());
+                config.set(msgPath + ".interaction-trigger", msg.getInteractionTrigger() != null ? msg.getInteractionTrigger() : "BOTH");
+                config.set(msgPath + ".delay", msg.getDelaySeconds());
+                config.set(msgPath + ".chance", msg.getChancePercent());
             }
 
             config.set(basePath + ".max-health", citizen.getMaxHealth());
@@ -988,6 +1232,10 @@ public class CitizensManager {
             config.set(basePath + ".default-offhand-slot", citizen.getDefaultOffHandSlot());
             config.set(basePath + ".nighttime-offhand-slot", citizen.getNighttimeOffhandSlot());
             config.set(basePath + ".knockback-scale", citizen.getKnockbackScale());
+            config.set(basePath + ".health-regen.enabled", citizen.isHealthRegenEnabled());
+            config.set(basePath + ".health-regen.amount", citizen.getHealthRegenAmount());
+            config.set(basePath + ".health-regen.interval-seconds", citizen.getHealthRegenIntervalSeconds());
+            config.set(basePath + ".health-regen.delay-after-damage-seconds", citizen.getHealthRegenDelayAfterDamageSeconds());
             config.setStringList(basePath + ".weapons", citizen.getWeapons());
             config.setStringList(basePath + ".offhand-items", citizen.getOffHandItems());
             config.setStringList(basePath + ".combat-message-target-groups", citizen.getCombatMessageTargetGroups());
@@ -1008,11 +1256,20 @@ public class CitizensManager {
             // This is needed due to a Hytale bug
             // Also, we only respawn sometimes due to a bug that can occur causing double spawning
             if (npcSpawned && roleChanged && respawnIfRoleChanged) {
+                UUID expectedNpcUuid = citizen.getSpawnedUUID();
                 HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
-                    // This is causing issues
-//                    if (citizen.getNpcRef() == null || !citizen.getNpcRef().isValid()) {
-//                        return;
-//                    }
+                    if (expectedNpcUuid == null || !expectedNpcUuid.equals(citizen.getSpawnedUUID())) {
+                        return;
+                    }
+
+                    if (isCitizenSpawning(citizen.getId())) {
+                        return;
+                    }
+
+                    Ref<EntityStore> npcRef = citizen.getNpcRef();
+                    if (npcRef == null || !npcRef.isValid()) {
+                        return;
+                    }
 
                     updateSpawnedCitizen(citizen, false);
                 }, 5, TimeUnit.SECONDS);
@@ -1026,6 +1283,7 @@ public class CitizensManager {
         citizen.setCreatedAt(System.currentTimeMillis());
 
         citizens.put(citizen.getId(), citizen);
+        fireCitizenAddedEvent(new CitizenAddedEvent(citizen));
 
         if (save)
             saveCitizen(citizen);
@@ -1148,7 +1406,7 @@ public class CitizensManager {
                 EntityStatValue healthValue = finalStatMap.get(DefaultEntityStatTypes.getHealth());
                 if (healthValue != null) {
                     float healthDifference = healthValue.getMax() - finalMaxHealth;
-                    finalStatMap.setStatValue(DefaultEntityStatTypes.getHealth(), healthValue.get() + healthDifference);
+                    setHealthValueClamped(finalStatMap, healthValue.get() + healthDifference);
                 }
             }
         }, 200, TimeUnit.MILLISECONDS);
@@ -1166,6 +1424,7 @@ public class CitizensManager {
         }
 
         despawnCitizenForDeletion(citizen);
+        fireCitizenRemovedEvent(new CitizenRemovedEvent(citizen));
     }
 
     private void despawnCitizenForDeletion(@Nonnull CitizenData citizen) {
@@ -1173,6 +1432,10 @@ public class CitizensManager {
         despawnCitizenHologram(citizen);
     }
     public void spawnCitizen(CitizenData citizen, boolean save) {
+        if (citizen.isAwaitingRespawn()) {
+            return;
+        }
+
         World world = Universe.get().getWorld(citizen.getWorldUUID());
         if (world == null) {
             getLogger().atWarning().log("Failed to spawn citizen: " + citizen.getName() + ". Failed to find world. Try updating the citizen's position.");
@@ -1238,7 +1501,34 @@ public class CitizensManager {
         return citizensCurrentlySpawning.contains(citizenId);
     }
 
+    public void bindCitizenEntityBinding(@Nonnull CitizenData citizen, @Nonnull Ref<EntityStore> ref) {
+        citizen.setNpcRef(ref);
+
+        UUIDComponent uuidComponent = ref.getStore().getComponent(ref, UUIDComponent.getComponentType());
+        if (uuidComponent != null) {
+            citizen.setSpawnedUUID(uuidComponent.getUuid());
+        }
+    }
+
+    public void clearCitizenEntityBinding(@Nonnull CitizenData citizen) {
+        citizen.setSpawnedUUID(null);
+        citizen.setNpcRef(null);
+    }
+
+    private boolean shouldAutoStartPluginPatrol(@Nonnull CitizenData citizen) {
+        String pluginPatrolPath = citizen.getPathConfig().getPluginPatrolPath();
+        return "PATROL".equals(citizen.getMovementBehavior().getType()) && !pluginPatrolPath.isEmpty();
+    }
+
     public void spawnCitizenNPC(CitizenData citizen, boolean save) {
+        if (citizen.isAwaitingRespawn()) {
+            return;
+        }
+
+        if (citizen.isHideNpc()) {
+            return;
+        }
+
         if (!citizensCurrentlySpawning.add(citizen.getId())) {
             return;
         }
@@ -1308,15 +1598,9 @@ public class CitizensManager {
             }
         }
 
-        UUIDComponent uuidComponent = store.getComponent(ref, UUIDComponent.getComponentType());
-
-        citizen.setNpcRef(ref);
-
-        if (uuidComponent != null) {
-            citizen.setSpawnedUUID(uuidComponent.getUuid());
-
-            if (save)
-                saveCitizen(citizen);
+        bindCitizenEntityBinding(citizen, ref);
+        if (save) {
+            saveCitizen(citizen);
         }
 
         if (!citizen.isTakesDamage() || "PASSIVE".equals(citizen.getAttitude())) {
@@ -1329,9 +1613,8 @@ public class CitizensManager {
         applyNpcNameplateComponent(store, ref, citizen);
         updateCitizenNPCItems(citizen);
         triggerAnimations(citizen, "DEFAULT");
-        String pluginPatrolPath = citizen.getPathConfig().getPluginPatrolPath();
-        if (!pluginPatrolPath.isEmpty() && patrolManager != null) {
-            patrolManager.startPatrol(citizen.getId(), pluginPatrolPath);
+        if (shouldAutoStartPluginPatrol(citizen) && patrolManager != null) {
+            patrolManager.startPatrol(citizen.getId(), citizen.getPathConfig().getPluginPatrolPath());
         }
         citizensCurrentlySpawning.remove(citizen.getId());
     }
@@ -1408,15 +1691,9 @@ public class CitizensManager {
                     ));
         }
 
-        UUIDComponent uuidComponent = store.getComponent(ref, UUIDComponent.getComponentType());
-
-        citizen.setNpcRef(ref);
-
-        if (uuidComponent != null) {
-            citizen.setSpawnedUUID(uuidComponent.getUuid());
-
-            if (save)
-                saveCitizen(citizen);
+        bindCitizenEntityBinding(citizen, ref);
+        if (save) {
+            saveCitizen(citizen);
         }
 
         if (!citizen.isTakesDamage() || "PASSIVE".equals(citizen.getAttitude())) {
@@ -1429,9 +1706,8 @@ public class CitizensManager {
         applyNpcNameplateComponent(store, ref, citizen);
         updateCitizenNPCItems(citizen);
         triggerAnimations(citizen, "DEFAULT");
-        String pluginPatrolPath = citizen.getPathConfig().getPluginPatrolPath();
-        if (!pluginPatrolPath.isEmpty() && patrolManager != null) {
-            patrolManager.startPatrol(citizen.getId(), pluginPatrolPath);
+        if (shouldAutoStartPluginPatrol(citizen) && patrolManager != null) {
+            patrolManager.startPatrol(citizen.getId(), citizen.getPathConfig().getPluginPatrolPath());
         }
         citizensCurrentlySpawning.remove(citizen.getId());
     }
@@ -1464,7 +1740,16 @@ public class CitizensManager {
         StaticModifier modifier = new StaticModifier(Modifier.ModifierTarget.MAX, StaticModifier.CalculationType.ADDITIVE, difference);
 
         statMap.putModifier(healthIndex, "hycitizens_max_health", modifier);
-        statMap.setStatValue(DefaultEntityStatTypes.getHealth(), targetHealth);
+        setHealthValueClamped(statMap, targetHealth);
+    }
+
+    private void setHealthValueClamped(@Nonnull EntityStatMap statMap, float targetHealth) {
+        EntityStatValue healthValue = statMap.get(DefaultEntityStatTypes.getHealth());
+        if (healthValue == null) {
+            return;
+        }
+        float clampedHealth = Math.max(0.0f, Math.min(healthValue.getMax(), targetHealth));
+        statMap.setStatValue(DefaultEntityStatTypes.getHealth(), clampedHealth);
     }
 
     public void setInteractionComponent(Store<EntityStore> store, Ref<EntityStore> ref, CitizenData citizenData) {
@@ -1493,6 +1778,22 @@ public class CitizensManager {
             String trigger = msg.getInteractionTrigger();
             if (trigger == null || "BOTH".equals(trigger) || "F_KEY".equals(trigger)) {
                 return true;
+            }
+        }
+
+        if (citizen.isFirstInteractionEnabled()) {
+            for (CommandAction cmd : citizen.getFirstInteractionCommandActions()) {
+                String trigger = cmd.getInteractionTrigger();
+                if (trigger == null || "BOTH".equals(trigger) || "F_KEY".equals(trigger)) {
+                    return true;
+                }
+            }
+
+            for (CitizenMessage msg : citizen.getFirstInteractionMessagesConfig().getMessages()) {
+                String trigger = msg.getInteractionTrigger();
+                if (trigger == null || "BOTH".equals(trigger) || "F_KEY".equals(trigger)) {
+                    return true;
+                }
             }
         }
         return false;
@@ -1910,8 +2211,7 @@ public class CitizensManager {
                 world.getEntityStore().getStore().removeEntity(npcRef, RemoveReason.REMOVE);
             });
 
-            citizen.setSpawnedUUID(null);
-            citizen.setNpcRef(null);
+            clearCitizenEntityBinding(citizen);
         }
 
         if (!despawned) {
@@ -1928,8 +2228,7 @@ public class CitizensManager {
                     });
                 }
 
-                citizen.setSpawnedUUID(null);
-                citizen.setNpcRef(null);
+                clearCitizenEntityBinding(citizen);
             }
         }
     }
@@ -1949,15 +2248,13 @@ public class CitizensManager {
             if (npcUUID != null) {
                 queuePendingNpcRemoval(citizen, npcUUID);
             }
-            citizen.setSpawnedUUID(null);
-            citizen.setNpcRef(null);
+            clearCitizenEntityBinding(citizen);
             return;
         }
 
         if (npcRef != null && npcRef.isValid()) {
             world.execute(() -> world.getEntityStore().getStore().removeEntity(npcRef, RemoveReason.REMOVE));
-            citizen.setSpawnedUUID(null);
-            citizen.setNpcRef(null);
+            clearCitizenEntityBinding(citizen);
             return;
         }
 
@@ -1969,8 +2266,7 @@ public class CitizensManager {
                 queuePendingNpcRemoval(citizen, npcUUID);
             }
 
-            citizen.setSpawnedUUID(null);
-            citizen.setNpcRef(null);
+            clearCitizenEntityBinding(citizen);
         }
     }
 
@@ -2170,6 +2466,8 @@ public class CitizensManager {
     }
 
     public void updateSpawnedCitizen(CitizenData citizen, boolean save) {
+        citizen.setAwaitingRespawn(false);
+
         despawnCitizen(citizen);
         spawnCitizen(citizen, save);
     }
@@ -2453,7 +2751,7 @@ public class CitizensManager {
             long now = System.currentTimeMillis();
 
             for (CitizenData citizen : citizens.values()) {
-                if (citizen.getSpawnedUUID() == null || citizen.getNpcRef() == null)
+                if (citizen.getSpawnedUUID() == null || citizen.getNpcRef() == null || !citizen.getNpcRef().isValid())
                     continue;
 
                 for (AnimationBehavior ab : citizen.getAnimationBehaviors()) {
@@ -2647,6 +2945,7 @@ public class CitizensManager {
     }
 
     private void scheduleRoleRetry(@Nonnull CitizenData citizen, @Nonnull String generatedRoleName) {
+        UUID expectedNpcUuid = citizen.getSpawnedUUID();
         HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
             try {
                 int roleIndex = NPCPlugin.get().getIndex(generatedRoleName);
@@ -2655,7 +2954,16 @@ public class CitizensManager {
                     return;
                 }
 
-                if (citizen.getNpcRef() == null || !citizen.getNpcRef().isValid()) {
+                if (expectedNpcUuid == null || !expectedNpcUuid.equals(citizen.getSpawnedUUID())) {
+                    return;
+                }
+
+                if (isCitizenSpawning(citizen.getId())) {
+                    return;
+                }
+
+                Ref<EntityStore> npcRef = citizen.getNpcRef();
+                if (npcRef == null || !npcRef.isValid()) {
                     getLogger().atWarning().log("Cannot apply role '" + generatedRoleName + "': NPC ref is no longer valid.");
                     return;
                 }
@@ -2666,8 +2974,16 @@ public class CitizensManager {
                 }
 
                 world.execute(() -> {
-                    despawnCitizenNPC(citizen);
-                    spawnCitizenNPC(citizen, false);
+                    if (expectedNpcUuid == null || !expectedNpcUuid.equals(citizen.getSpawnedUUID())) {
+                        return;
+                    }
+
+                    Ref<EntityStore> currentRef = citizen.getNpcRef();
+                    if (currentRef == null || !currentRef.isValid()) {
+                        return;
+                    }
+
+                    updateSpawnedCitizenNPC(citizen, false);
                     getLogger().atInfo().log("Successfully applied generated role '" + generatedRoleName + "' to citizen '" + citizen.getName() + "'.");
                 });
             } catch (Exception e) {
@@ -2730,6 +3046,34 @@ public class CitizensManager {
         citizen.setPathConfig(pathConfig);
         saveCitizen(citizen);
         updateSpawnedCitizenNPC(citizen, true);
+    }
+
+    public void addCitizenAddedListener(@Nonnull CitizenAddedListener listener) {
+        addedListeners.add(listener);
+    }
+
+    public void removeCitizenAddedListener(@Nonnull CitizenAddedListener listener) {
+        addedListeners.remove(listener);
+    }
+
+    public void fireCitizenAddedEvent(@Nonnull CitizenAddedEvent event) {
+        for (CitizenAddedListener listener : addedListeners) {
+            listener.onCitizenAdded(event);
+        }
+    }
+
+    public void addCitizenRemovedListener(@Nonnull CitizenRemovedListener listener) {
+        removedListeners.add(listener);
+    }
+
+    public void removeCitizenRemovedListener(@Nonnull CitizenRemovedListener listener) {
+        removedListeners.remove(listener);
+    }
+
+    public void fireCitizenRemovedEvent(@Nonnull CitizenRemovedEvent event) {
+        for (CitizenRemovedListener listener : removedListeners) {
+            listener.onCitizenRemoved(event);
+        }
     }
 
     public void addCitizenInteractListener(CitizenInteractListener listener) {
@@ -2805,6 +3149,30 @@ public class CitizensManager {
         saveGroups();
     }
 
+    public boolean renameGroup(@Nonnull String oldGroupName, @Nonnull String newGroupName) {
+        String oldTrimmed = oldGroupName.trim();
+        String newTrimmed = newGroupName.trim();
+        if (oldTrimmed.isEmpty() || newTrimmed.isEmpty()) {
+            return false;
+        }
+        if (!groups.contains(oldTrimmed) || groups.contains(newTrimmed)) {
+            return false;
+        }
+
+        groups.remove(oldTrimmed);
+        groups.add(newTrimmed);
+
+        for (CitizenData citizen : citizens.values()) {
+            if (oldTrimmed.equals(citizen.getGroup())) {
+                citizen.setGroup(newTrimmed);
+                saveCitizen(citizen);
+            }
+        }
+
+        saveGroups();
+        return true;
+    }
+
     public boolean groupExists(@Nonnull String groupName) {
         return groups.contains(groupName);
     }
@@ -2823,11 +3191,42 @@ public class CitizensManager {
     }
 
     public void startCitizenPatrol(@Nonnull String citizenId, @Nonnull String pathName) {
+        CitizenData citizen = citizens.get(citizenId);
+        if (citizen == null) {
+            return;
+        }
+        if (!"PATROL".equals(citizen.getMovementBehavior().getType())) {
+            return;
+        }
         patrolManager.startPatrol(citizenId, pathName);
     }
 
     public void stopCitizenPatrol(@Nonnull String citizenId) {
         patrolManager.stopPatrol(citizenId);
+    }
+
+    public boolean renamePatrolPath(@Nonnull String oldName, @Nonnull String newName) {
+        if (!patrolManager.renamePath(oldName, newName)) {
+            return false;
+        }
+
+        for (CitizenData citizen : citizens.values()) {
+            PathConfig pathConfig = citizen.getPathConfig();
+            boolean changed = false;
+            if (oldName.equals(pathConfig.getPluginPatrolPath())) {
+                pathConfig.setPluginPatrolPath(newName);
+                changed = true;
+            }
+            if (oldName.equals(pathConfig.getPathName())) {
+                pathConfig.setPathName(newName);
+                changed = true;
+            }
+            if (changed) {
+                saveCitizen(citizen);
+            }
+        }
+
+        return true;
     }
 
     public void moveCitizenToPosition(@Nonnull String citizenId, @Nonnull Vector3d position) {

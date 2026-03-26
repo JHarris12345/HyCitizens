@@ -15,7 +15,6 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.server.npc.entities.NPCEntity;
 
 import javax.annotation.Nonnull;
-import javax.swing.text.html.parser.Entity;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -312,13 +311,15 @@ public class ChunkPreLoadListener {
 
         plugin.getCitizensManager().bindCitizenEntityBinding(citizen, entityRef);
 
-        if (citizen.isPlayerModel()) {
+        if (!plugin.getCitizensManager().refreshSpawnedCitizenAppearance(citizen) && citizen.isPlayerModel()) {
             plugin.getCitizensManager().updateCitizenSkin(citizen, true);
         }
 
-        HyCitizensPlugin.get().getCitizensManager().setInteractionComponent(entityRef.getStore(), entityRef, citizen);
-        HyCitizensPlugin.get().getCitizensManager().refreshNpcNameplate(citizen);
-        HyCitizensPlugin.get().getCitizensManager().triggerAnimations(citizen, "DEFAULT");
+        plugin.getCitizensManager().setInteractionComponent(entityRef.getStore(), entityRef, citizen);
+        plugin.getCitizensManager().refreshNpcNameplate(citizen);
+        plugin.getCitizensManager().triggerAnimations(citizen, "DEFAULT");
+        plugin.getCitizensManager().updateCitizenNPCItems(citizen);
+        plugin.getCitizensManager().getScheduleManager().refreshCitizen(citizen);
 
         String pluginPatrolPath = citizen.getPathConfig().getPluginPatrolPath();
         if (!pluginPatrolPath.isEmpty()) {
@@ -365,6 +366,12 @@ public class ChunkPreLoadListener {
                         return;
                     }
 
+                    if (plugin.getCitizensManager().migrateLegacyCitizenHologramEntities(world, citizen)
+                            || plugin.getCitizensManager().rebindCitizenHologramEntities(world, citizen)) {
+                        plugin.getCitizensManager().updateSpawnedCitizenHologram(citizen, true);
+                        return;
+                    }
+
                     boolean shouldSpawnHologram = citizen.getHologramLineUuids() == null || citizen.getHologramLineUuids().isEmpty();
                     if (!shouldSpawnHologram) {
                         for (UUID uuid : citizen.getHologramLineUuids()) {
@@ -398,31 +405,21 @@ public class ChunkPreLoadListener {
                     return;
                 }
 
-                boolean allHologramsExist = false;
-
-                if (citizen.getHologramLineUuids() != null && !citizen.getHologramLineUuids().isEmpty()) {
-                    allHologramsExist = true;
-                    for (UUID uuid : citizen.getHologramLineUuids()) {
-                        if (uuid == null || world.getEntityRef(uuid) == null) {
-                            allHologramsExist = false;
-                            break;
-                        }
-                    }
-                }
-
-                if (allHologramsExist) {
-                    // All hologram entities found, we're done
+                if (plugin.getCitizensManager().migrateLegacyCitizenHologramEntities(world, citizen)
+                        || plugin.getCitizensManager().rebindCitizenHologramEntities(world, citizen)) {
+                    plugin.getCitizensManager().updateSpawnedCitizenHologram(citizen, true);
                     hologramChecked[0] = true;
                     hologramFutureRef[0].cancel(false);
                     citizensBeingProcessed.remove(citizen.getId());
-                    getLogger().atInfo().log("Found hologram. Hologram UUID: "  + citizen.getHologramLineUuids() + " for " + citizen.getName());
-                } else if (citizen.getHologramLineUuids() == null || citizen.getHologramLineUuids().isEmpty()) {
+                    return;
+                }
+
+                if (citizen.getHologramLineUuids() == null || citizen.getHologramLineUuids().isEmpty()) {
                     // No hologram UUIDs stored, spawn new hologram
                     plugin.getCitizensManager().spawnCitizenHologram(citizen, true);
                     hologramChecked[0] = true;
                     hologramFutureRef[0].cancel(false);
                     citizensBeingProcessed.remove(citizen.getId());
-                    getLogger().atInfo().log("DID NOT find hologram. Hologram UUID: "  + citizen.getHologramLineUuids() + " for " + citizen.getName());
                 }
             });
 
@@ -430,7 +427,7 @@ public class ChunkPreLoadListener {
     }
 
     Ref<EntityStore> checkIfNpcExists(Store<EntityStore> store, CitizenData citizen) {
-        String role = "HyCitizens_" + citizen.getId() + "_Role";
+        String rolePrefix = "HyCitizens_" + citizen.getId() + "_";
         Query<EntityStore> query = NPCEntity.getComponentType();
         CompletableFuture<Ref<EntityStore>> found = new CompletableFuture<>();
 
@@ -450,7 +447,8 @@ public class ChunkPreLoadListener {
                 return;
             }
 
-            if (npc.getRole().getRoleName().equals(role)) {
+            String roleName = npc.getRole().getRoleName();
+            if (roleName != null && roleName.startsWith(rolePrefix)) {
                 found.complete(otherRef);
             }
         });

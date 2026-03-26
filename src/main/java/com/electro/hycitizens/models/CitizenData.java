@@ -62,6 +62,7 @@ public class CitizenData {
     // Behavior fields
     private List<AnimationBehavior> animationBehaviors = new ArrayList<>();
     private MovementBehavior movementBehavior = new MovementBehavior();
+    private ScheduleConfig scheduleConfig = new ScheduleConfig();
     private MessagesConfig messagesConfig = new MessagesConfig();
     private DeathConfig deathConfig = new DeathConfig();
     private String commandSelectionMode = "ALL";
@@ -104,6 +105,10 @@ public class CitizenData {
 
     // Group field
     private String group = "";
+    private transient ScheduleRuntimeState currentScheduleRuntimeState = ScheduleRuntimeState.INACTIVE;
+    private transient String currentScheduleEntryId = "";
+    private transient String currentScheduleRoleName = "";
+    private transient String currentScheduleStatusText = "Inactive";
 
     // Citizen follow fields
     private boolean followCitizenEnabled = false;
@@ -501,6 +506,15 @@ public class CitizenData {
     }
 
     @Nonnull
+    public ScheduleConfig getScheduleConfig() {
+        return scheduleConfig;
+    }
+
+    public void setScheduleConfig(@Nonnull ScheduleConfig scheduleConfig) {
+        this.scheduleConfig = scheduleConfig;
+    }
+
+    @Nonnull
     public MessagesConfig getMessagesConfig() {
         return messagesConfig;
     }
@@ -741,6 +755,42 @@ public class CitizenData {
 
     public void setFollowDistance(float followDistance) {
         this.followDistance = Math.max(0.1f, followDistance);
+    }
+
+    @Nonnull
+    public ScheduleRuntimeState getCurrentScheduleRuntimeState() {
+        return currentScheduleRuntimeState;
+    }
+
+    public void setCurrentScheduleRuntimeState(@Nonnull ScheduleRuntimeState currentScheduleRuntimeState) {
+        this.currentScheduleRuntimeState = currentScheduleRuntimeState;
+    }
+
+    @Nonnull
+    public String getCurrentScheduleEntryId() {
+        return currentScheduleEntryId;
+    }
+
+    public void setCurrentScheduleEntryId(@Nullable String currentScheduleEntryId) {
+        this.currentScheduleEntryId = currentScheduleEntryId != null ? currentScheduleEntryId : "";
+    }
+
+    @Nonnull
+    public String getCurrentScheduleRoleName() {
+        return currentScheduleRoleName;
+    }
+
+    public void setCurrentScheduleRoleName(@Nullable String currentScheduleRoleName) {
+        this.currentScheduleRoleName = currentScheduleRoleName != null ? currentScheduleRoleName : "";
+    }
+
+    @Nonnull
+    public String getCurrentScheduleStatusText() {
+        return currentScheduleStatusText;
+    }
+
+    public void setCurrentScheduleStatusText(@Nullable String currentScheduleStatusText) {
+        this.currentScheduleStatusText = currentScheduleStatusText != null ? currentScheduleStatusText : "";
     }
 
     @Nonnull

@@ -1851,8 +1851,23 @@ public class CitizensUI {
                 
                             <!-- Quick Actions Section -->
                             <div class="section">
-                                {{@sectionHeader:title=Quick Actions,description= }}
-                
+                                {{@sectionHeader:title=Quick Actions,description=Teleport&#44; duplicate&#44; or remove this citizen immediately}}
+
+                                <div class="form-row">
+                                    <button id="edit-tp-btn" class="secondary-button" style="anchor-width: 180; anchor-height: 44;">TP</button>
+                                    <div class="spacer-h-sm"></div>
+                                    <button id="edit-clone-btn" class="secondary-button" style="anchor-width: 180; anchor-height: 44;">Clone</button>
+                                    <div class="spacer-h-sm"></div>
+                                    <button id="edit-remove-btn" class="secondary-button" style="anchor-width: 180; anchor-height: 44;">Remove</button>
+                                </div>
+                            </div>
+
+                            <div class="spacer-md"></div>
+
+                            <!-- Configuration Section -->
+                            <div class="section">
+                                {{@sectionHeader:title=Configuration,description=Open specialized editors and apply setup changes}}
+
                                 <div class="form-row">
                                     <button id="edit-commands-btn" class="secondary-button" style="anchor-width: 200; anchor-height: 44;">Commands</button>
                                     <div class="spacer-h-sm"></div>
@@ -1874,7 +1889,7 @@ public class CitizensUI {
                                     <button id="first-interaction-btn" class="secondary-button" style="anchor-width: 240; anchor-height: 44;">First Interaction</button>
                                 </div>
                             </div>
-                
+
                             <div class="spacer-lg"></div>
                 
                         </div>
@@ -2280,211 +2295,216 @@ public class CitizensUI {
                     CitizenData citizen = item.getRawCitizen();
                     final String cid = citizen.getId();
 
-                    page.addEventListener("tp-" + cid, CustomUIEventBindingType.Activating, event -> {
-                        UUID citizenWorldUUID = citizen.getWorldUUID();
-
-                        if (citizenWorldUUID == null) {
-                            playerRef.sendMessage(Message.raw("Failed to teleport: Citizen has no world!").color(Color.RED));
-                            return;
-                        }
-
-                        World world = Universe.get().getWorld(citizenWorldUUID);
-                        if (world == null) {
-                            playerRef.sendMessage(Message.raw("Failed to teleport: World not found!").color(Color.RED));
-                            return;
-                        }
-
-                        Vector3d tpPos = new Vector3d(citizen.getCurrentPosition());
-
-                        // Try to teleport to the actual NPC's position
-                        if (citizen.getNpcRef() != null && citizen.getNpcRef().isValid()) {
-                            TransformComponent transform = citizen.getNpcRef().getStore().getComponent(citizen.getNpcRef(), TransformComponent.getComponentType());
-
-                            if (transform != null) {
-                                tpPos = new Vector3d(transform.getPosition());
-                            }
-                        }
-
-                        playerRef.getReference().getStore().addComponent(playerRef.getReference(),
-                                Teleport.getComponentType(), new Teleport(world, tpPos, new Vector3f(0, 0, 0)));
-
-                        playerRef.sendMessage(Message.raw("Teleported to citizen '" + citizen.getName() + "'!").color(Color.GREEN));
-                    });
+                    page.addEventListener("tp-" + cid, CustomUIEventBindingType.Activating, event ->
+                            teleportPlayerToCitizen(playerRef, citizen));
 
                     page.addEventListener("edit-" + cid, CustomUIEventBindingType.Activating, event ->
                             openEditCitizenGUI(playerRef, store, citizen));
 
                     page.addEventListener("clone-" + cid, CustomUIEventBindingType.Activating, event -> {
-                        Vector3d position = new Vector3d(playerRef.getTransform().getPosition());
-                        Vector3f rotation = new Vector3f(playerRef.getTransform().getRotation());
-
-                        UUID worldUUID = playerRef.getWorldUuid();
-                        if (worldUUID == null) {
-                            playerRef.sendMessage(Message.raw("Failed to clone citizen!").color(Color.RED));
-                            return;
+                        if (cloneCitizenToPlayer(playerRef, citizen)) {
+                            openCitizensGUI(playerRef, store, Tab.MANAGE);
                         }
-
-                        PlayerSkin playerSkin = null;
-                        if (citizen.getCachedSkin() != null) {
-                            playerSkin = new PlayerSkin(citizen.getCachedSkin());
-                        }
-
-                        List<CommandAction> clonedBaseCommands = copyCommandActions(citizen.getCommandActions());
-                        MessagesConfig sourceMessagesConfig = citizen.getMessagesConfig();
-                        List<CitizenMessage> clonedBaseMessages = copyCitizenMessages(sourceMessagesConfig.getMessages());
-
-                        CitizenData clonedCitizen = new CitizenData(
-                                UUID.randomUUID().toString(),
-                                citizen.getName(),
-                                citizen.getModelId(),
-                                worldUUID,
-                                position,
-                                rotation,
-                                citizen.getScale(),
-                                null,
-                                new ArrayList<>(),
-                                citizen.getRequiredPermission(),
-                                citizen.getNoPermissionMessage(),
-                                clonedBaseCommands,
-                                citizen.isPlayerModel(),
-                                citizen.isUseLiveSkin(),
-                                citizen.getSkinUsername(),
-                                playerSkin,
-                                citizen.getLastSkinUpdate(),
-                                citizen.getRotateTowardsPlayer()
-                        );
-
-                        clonedCitizen.setNametagOffset(citizen.getNametagOffset());
-                        clonedCitizen.setHideNametag(citizen.isHideNametag());
-                        clonedCitizen.setHideNpc(citizen.isHideNpc());
-                        clonedCitizen.setNpcHelmet(citizen.getNpcHelmet());
-                        clonedCitizen.setNpcChest(citizen.getNpcChest());
-                        clonedCitizen.setNpcGloves(citizen.getNpcGloves());
-                        clonedCitizen.setNpcLeggings(citizen.getNpcLeggings());
-                        clonedCitizen.setNpcHand(citizen.getNpcHand());
-                        clonedCitizen.setNpcOffHand(citizen.getNpcOffHand());
-                        clonedCitizen.setLookAtDistance(citizen.getLookAtDistance());
-                        clonedCitizen.setCommandSelectionMode(citizen.getCommandSelectionMode());
-
-                        // Copy behaviors and messages
-                        clonedCitizen.setAnimationBehaviors(new ArrayList<>(citizen.getAnimationBehaviors()));
-                        clonedCitizen.setMovementBehavior(new MovementBehavior(
-                                citizen.getMovementBehavior().getType(),
-                                citizen.getMovementBehavior().getWalkSpeed(),
-                                citizen.getMovementBehavior().getWanderRadius(),
-                                citizen.getMovementBehavior().getWanderWidth(),
-                                citizen.getMovementBehavior().getWanderDepth()));
-                        clonedCitizen.setMessagesConfig(new MessagesConfig(
-                                clonedBaseMessages,
-                                sourceMessagesConfig.getSelectionMode(),
-                                sourceMessagesConfig.isEnabled()));
-
-                        // Copy group
-                        clonedCitizen.setGroup(citizen.getGroup());
-
-                        // Copy attitude and damage settings
-                        clonedCitizen.setAttitude(citizen.getAttitude());
-                        clonedCitizen.setTakesDamage(citizen.isTakesDamage());
-                        clonedCitizen.setOverrideHealth(citizen.isOverrideHealth());
-                        clonedCitizen.setHealthAmount(citizen.getHealthAmount());
-                        clonedCitizen.setOverrideDamage(citizen.isOverrideDamage());
-                        clonedCitizen.setDamageAmount(citizen.getDamageAmount());
-                        clonedCitizen.setHealthRegenEnabled(citizen.isHealthRegenEnabled());
-                        clonedCitizen.setHealthRegenAmount(citizen.getHealthRegenAmount());
-                        clonedCitizen.setHealthRegenIntervalSeconds(citizen.getHealthRegenIntervalSeconds());
-                        clonedCitizen.setHealthRegenDelayAfterDamageSeconds(citizen.getHealthRegenDelayAfterDamageSeconds());
-
-                        // Copy respawn settings
-                        clonedCitizen.setRespawnOnDeath(citizen.isRespawnOnDeath());
-                        clonedCitizen.setRespawnDelaySeconds(citizen.getRespawnDelaySeconds());
-
-                        // Copy death config
-                        DeathConfig srcDc = citizen.getDeathConfig();
-                        DeathConfig clonedDc = new DeathConfig();
-                        clonedDc.setCommandSelectionMode(srcDc.getCommandSelectionMode());
-                        clonedDc.setMessageSelectionMode(srcDc.getMessageSelectionMode());
-                        clonedDc.setDropCountMin(srcDc.getDropCountMin());
-                        clonedDc.setDropCountMax(srcDc.getDropCountMax());
-                        clonedDc.setCommandCountMin(srcDc.getCommandCountMin());
-                        clonedDc.setCommandCountMax(srcDc.getCommandCountMax());
-                        clonedDc.setMessageCountMin(srcDc.getMessageCountMin());
-                        clonedDc.setMessageCountMax(srcDc.getMessageCountMax());
-                        clonedDc.setDropItems(copyDeathDropItems(srcDc.getDropItems()));
-                        clonedDc.setDeathCommands(copyCommandActions(srcDc.getDeathCommands()));
-                        clonedDc.setDeathMessages(copyCitizenMessages(srcDc.getDeathMessages()));
-                        clonedCitizen.setDeathConfig(clonedDc);
-
-                        // Copy first interaction config
-                        clonedCitizen.setFirstInteractionEnabled(citizen.isFirstInteractionEnabled());
-                        clonedCitizen.setFirstInteractionCommandSelectionMode(citizen.getFirstInteractionCommandSelectionMode());
-                        clonedCitizen.setPostFirstInteractionBehavior(citizen.getPostFirstInteractionBehavior());
-                        clonedCitizen.setRunNormalOnFirstInteraction(citizen.isRunNormalOnFirstInteraction());
-                        clonedCitizen.setFirstInteractionCommandActions(copyCommandActions(citizen.getFirstInteractionCommandActions()));
-                        MessagesConfig firstMessages = citizen.getFirstInteractionMessagesConfig();
-                        clonedCitizen.setFirstInteractionMessagesConfig(new MessagesConfig(
-                                copyCitizenMessages(firstMessages.getMessages()),
-                                firstMessages.getSelectionMode(),
-                                firstMessages.isEnabled()
-                        ));
-                        clonedCitizen.setPlayersWhoCompletedFirstInteraction(Collections.emptySet());
-
-                        // Copy config objects
-                        CombatConfig clonedCombat = new CombatConfig();
-                        clonedCombat.copyFrom(citizen.getCombatConfig());
-                        clonedCitizen.setCombatConfig(clonedCombat);
-
-                        DetectionConfig clonedDetection = new DetectionConfig();
-                        clonedDetection.copyFrom(citizen.getDetectionConfig());
-                        clonedCitizen.setDetectionConfig(clonedDetection);
-
-                        PathConfig clonedPath = new PathConfig();
-                        clonedPath.copyFrom(citizen.getPathConfig());
-                        clonedCitizen.setPathConfig(clonedPath);
-
-                        clonedCitizen.setMaxHealth(citizen.getMaxHealth());
-                        clonedCitizen.setLeashDistance(citizen.getLeashDistance());
-                        clonedCitizen.setDefaultNpcAttitude(citizen.getDefaultNpcAttitude());
-                        clonedCitizen.setApplySeparation(citizen.isApplySeparation());
-
-                        // Copy extended Template_Citizen parameters
-                        clonedCitizen.setDropList(citizen.getDropList());
-                        clonedCitizen.setRunThreshold(citizen.getRunThreshold());
-                        clonedCitizen.setWakingIdleBehaviorComponent(citizen.getWakingIdleBehaviorComponent());
-                        clonedCitizen.setDayFlavorAnimation(citizen.getDayFlavorAnimation());
-                        clonedCitizen.setDayFlavorAnimationLengthMin(citizen.getDayFlavorAnimationLengthMin());
-                        clonedCitizen.setDayFlavorAnimationLengthMax(citizen.getDayFlavorAnimationLengthMax());
-                        clonedCitizen.setAttitudeGroup(citizen.getAttitudeGroup());
-                        clonedCitizen.setNameTranslationKey(citizen.getNameTranslationKey());
-                        clonedCitizen.setBreathesInWater(citizen.isBreathesInWater());
-                        clonedCitizen.setLeashMinPlayerDistance(citizen.getLeashMinPlayerDistance());
-                        clonedCitizen.setLeashTimerMin(citizen.getLeashTimerMin());
-                        clonedCitizen.setLeashTimerMax(citizen.getLeashTimerMax());
-                        clonedCitizen.setHardLeashDistance(citizen.getHardLeashDistance());
-                        clonedCitizen.setDefaultHotbarSlot(citizen.getDefaultHotbarSlot());
-                        clonedCitizen.setRandomIdleHotbarSlot(citizen.getRandomIdleHotbarSlot());
-                        clonedCitizen.setChanceToEquipFromIdleHotbarSlot(citizen.getChanceToEquipFromIdleHotbarSlot());
-                        clonedCitizen.setDefaultOffHandSlot(citizen.getDefaultOffHandSlot());
-                        clonedCitizen.setNighttimeOffhandSlot(citizen.getNighttimeOffhandSlot());
-                        clonedCitizen.setKnockbackScale(citizen.getKnockbackScale());
-                        clonedCitizen.setWeapons(new ArrayList<>(citizen.getWeapons()));
-                        clonedCitizen.setOffHandItems(new ArrayList<>(citizen.getOffHandItems()));
-                        clonedCitizen.setCombatMessageTargetGroups(new ArrayList<>(citizen.getCombatMessageTargetGroups()));
-                        clonedCitizen.setFlockArray(new ArrayList<>(citizen.getFlockArray()));
-                        clonedCitizen.setDisableDamageGroups(new ArrayList<>(citizen.getDisableDamageGroups()));
-
-                        plugin.getCitizensManager().addCitizen(clonedCitizen, true);
-                        playerRef.sendMessage(Message.raw("Citizen '" + citizen.getName() + "' cloned at your position!").color(Color.GREEN));
-                        openCitizensGUI(playerRef, store, Tab.MANAGE);
                     });
 
                     page.addEventListener("remove-" + cid, CustomUIEventBindingType.Activating, event -> {
-                        plugin.getCitizensManager().removeCitizen(cid);
-                        playerRef.sendMessage(Message.raw("Citizen '" + citizen.getName() + "' removed!").color(Color.GREEN));
+                        removeCitizen(playerRef, citizen);
                         openCitizensGUI(playerRef, store, Tab.MANAGE);
                     });
                 }
             }
         }
+    }
+
+    private void teleportPlayerToCitizen(@Nonnull PlayerRef playerRef, @Nonnull CitizenData citizen) {
+        UUID citizenWorldUUID = citizen.getWorldUUID();
+
+        if (citizenWorldUUID == null) {
+            playerRef.sendMessage(Message.raw("Failed to teleport: Citizen has no world!").color(Color.RED));
+            return;
+        }
+
+        World world = Universe.get().getWorld(citizenWorldUUID);
+        if (world == null) {
+            playerRef.sendMessage(Message.raw("Failed to teleport: World not found!").color(Color.RED));
+            return;
+        }
+
+        Vector3d tpPos = new Vector3d(citizen.getCurrentPosition());
+
+        if (citizen.getNpcRef() != null && citizen.getNpcRef().isValid()) {
+            TransformComponent transform = citizen.getNpcRef().getStore().getComponent(citizen.getNpcRef(),
+                    TransformComponent.getComponentType());
+
+            if (transform != null) {
+                tpPos = new Vector3d(transform.getPosition());
+            }
+        }
+
+        playerRef.getReference().getStore().addComponent(playerRef.getReference(),
+                Teleport.getComponentType(), new Teleport(world, tpPos, new Vector3f(0, 0, 0)));
+
+        playerRef.sendMessage(Message.raw("Teleported to citizen '" + citizen.getName() + "'!").color(Color.GREEN));
+    }
+
+    private boolean cloneCitizenToPlayer(@Nonnull PlayerRef playerRef, @Nonnull CitizenData citizen) {
+        Vector3d position = new Vector3d(playerRef.getTransform().getPosition());
+        Vector3f rotation = new Vector3f(playerRef.getTransform().getRotation());
+
+        UUID worldUUID = playerRef.getWorldUuid();
+        if (worldUUID == null) {
+            playerRef.sendMessage(Message.raw("Failed to clone citizen!").color(Color.RED));
+            return false;
+        }
+
+        PlayerSkin playerSkin = null;
+        if (citizen.getCachedSkin() != null) {
+            playerSkin = new PlayerSkin(citizen.getCachedSkin());
+        }
+
+        List<CommandAction> clonedBaseCommands = copyCommandActions(citizen.getCommandActions());
+        MessagesConfig sourceMessagesConfig = citizen.getMessagesConfig();
+        List<CitizenMessage> clonedBaseMessages = copyCitizenMessages(sourceMessagesConfig.getMessages());
+
+        CitizenData clonedCitizen = new CitizenData(
+                UUID.randomUUID().toString(),
+                citizen.getName(),
+                citizen.getModelId(),
+                worldUUID,
+                position,
+                rotation,
+                citizen.getScale(),
+                null,
+                new ArrayList<>(),
+                citizen.getRequiredPermission(),
+                citizen.getNoPermissionMessage(),
+                clonedBaseCommands,
+                citizen.isPlayerModel(),
+                citizen.isUseLiveSkin(),
+                citizen.getSkinUsername(),
+                playerSkin,
+                citizen.getLastSkinUpdate(),
+                citizen.getRotateTowardsPlayer()
+        );
+
+        clonedCitizen.setNametagOffset(citizen.getNametagOffset());
+        clonedCitizen.setHideNametag(citizen.isHideNametag());
+        clonedCitizen.setHideNpc(citizen.isHideNpc());
+        clonedCitizen.setNpcHelmet(citizen.getNpcHelmet());
+        clonedCitizen.setNpcChest(citizen.getNpcChest());
+        clonedCitizen.setNpcGloves(citizen.getNpcGloves());
+        clonedCitizen.setNpcLeggings(citizen.getNpcLeggings());
+        clonedCitizen.setNpcHand(citizen.getNpcHand());
+        clonedCitizen.setNpcOffHand(citizen.getNpcOffHand());
+        clonedCitizen.setLookAtDistance(citizen.getLookAtDistance());
+        clonedCitizen.setCommandSelectionMode(citizen.getCommandSelectionMode());
+
+        clonedCitizen.setAnimationBehaviors(new ArrayList<>(citizen.getAnimationBehaviors()));
+        clonedCitizen.setMovementBehavior(new MovementBehavior(
+                citizen.getMovementBehavior().getType(),
+                citizen.getMovementBehavior().getWalkSpeed(),
+                citizen.getMovementBehavior().getWanderRadius(),
+                citizen.getMovementBehavior().getWanderWidth(),
+                citizen.getMovementBehavior().getWanderDepth()));
+        clonedCitizen.setMessagesConfig(new MessagesConfig(
+                clonedBaseMessages,
+                sourceMessagesConfig.getSelectionMode(),
+                sourceMessagesConfig.isEnabled()));
+
+        clonedCitizen.setGroup(citizen.getGroup());
+
+        clonedCitizen.setAttitude(citizen.getAttitude());
+        clonedCitizen.setTakesDamage(citizen.isTakesDamage());
+        clonedCitizen.setOverrideHealth(citizen.isOverrideHealth());
+        clonedCitizen.setHealthAmount(citizen.getHealthAmount());
+        clonedCitizen.setOverrideDamage(citizen.isOverrideDamage());
+        clonedCitizen.setDamageAmount(citizen.getDamageAmount());
+        clonedCitizen.setHealthRegenEnabled(citizen.isHealthRegenEnabled());
+        clonedCitizen.setHealthRegenAmount(citizen.getHealthRegenAmount());
+        clonedCitizen.setHealthRegenIntervalSeconds(citizen.getHealthRegenIntervalSeconds());
+        clonedCitizen.setHealthRegenDelayAfterDamageSeconds(citizen.getHealthRegenDelayAfterDamageSeconds());
+
+        clonedCitizen.setRespawnOnDeath(citizen.isRespawnOnDeath());
+        clonedCitizen.setRespawnDelaySeconds(citizen.getRespawnDelaySeconds());
+
+        DeathConfig srcDc = citizen.getDeathConfig();
+        DeathConfig clonedDc = new DeathConfig();
+        clonedDc.setCommandSelectionMode(srcDc.getCommandSelectionMode());
+        clonedDc.setMessageSelectionMode(srcDc.getMessageSelectionMode());
+        clonedDc.setDropCountMin(srcDc.getDropCountMin());
+        clonedDc.setDropCountMax(srcDc.getDropCountMax());
+        clonedDc.setCommandCountMin(srcDc.getCommandCountMin());
+        clonedDc.setCommandCountMax(srcDc.getCommandCountMax());
+        clonedDc.setMessageCountMin(srcDc.getMessageCountMin());
+        clonedDc.setMessageCountMax(srcDc.getMessageCountMax());
+        clonedDc.setDropItems(copyDeathDropItems(srcDc.getDropItems()));
+        clonedDc.setDeathCommands(copyCommandActions(srcDc.getDeathCommands()));
+        clonedDc.setDeathMessages(copyCitizenMessages(srcDc.getDeathMessages()));
+        clonedCitizen.setDeathConfig(clonedDc);
+
+        clonedCitizen.setFirstInteractionEnabled(citizen.isFirstInteractionEnabled());
+        clonedCitizen.setFirstInteractionCommandSelectionMode(citizen.getFirstInteractionCommandSelectionMode());
+        clonedCitizen.setPostFirstInteractionBehavior(citizen.getPostFirstInteractionBehavior());
+        clonedCitizen.setRunNormalOnFirstInteraction(citizen.isRunNormalOnFirstInteraction());
+        clonedCitizen.setFirstInteractionCommandActions(copyCommandActions(citizen.getFirstInteractionCommandActions()));
+        MessagesConfig firstMessages = citizen.getFirstInteractionMessagesConfig();
+        clonedCitizen.setFirstInteractionMessagesConfig(new MessagesConfig(
+                copyCitizenMessages(firstMessages.getMessages()),
+                firstMessages.getSelectionMode(),
+                firstMessages.isEnabled()
+        ));
+        clonedCitizen.setPlayersWhoCompletedFirstInteraction(Collections.emptySet());
+
+        CombatConfig clonedCombat = new CombatConfig();
+        clonedCombat.copyFrom(citizen.getCombatConfig());
+        clonedCitizen.setCombatConfig(clonedCombat);
+
+        DetectionConfig clonedDetection = new DetectionConfig();
+        clonedDetection.copyFrom(citizen.getDetectionConfig());
+        clonedCitizen.setDetectionConfig(clonedDetection);
+
+        PathConfig clonedPath = new PathConfig();
+        clonedPath.copyFrom(citizen.getPathConfig());
+        clonedCitizen.setPathConfig(clonedPath);
+
+        clonedCitizen.setMaxHealth(citizen.getMaxHealth());
+        clonedCitizen.setLeashDistance(citizen.getLeashDistance());
+        clonedCitizen.setDefaultNpcAttitude(citizen.getDefaultNpcAttitude());
+        clonedCitizen.setApplySeparation(citizen.isApplySeparation());
+
+        clonedCitizen.setDropList(citizen.getDropList());
+        clonedCitizen.setRunThreshold(citizen.getRunThreshold());
+        clonedCitizen.setWakingIdleBehaviorComponent(citizen.getWakingIdleBehaviorComponent());
+        clonedCitizen.setDayFlavorAnimation(citizen.getDayFlavorAnimation());
+        clonedCitizen.setDayFlavorAnimationLengthMin(citizen.getDayFlavorAnimationLengthMin());
+        clonedCitizen.setDayFlavorAnimationLengthMax(citizen.getDayFlavorAnimationLengthMax());
+        clonedCitizen.setAttitudeGroup(citizen.getAttitudeGroup());
+        clonedCitizen.setNameTranslationKey(citizen.getNameTranslationKey());
+        clonedCitizen.setBreathesInWater(citizen.isBreathesInWater());
+        clonedCitizen.setLeashMinPlayerDistance(citizen.getLeashMinPlayerDistance());
+        clonedCitizen.setLeashTimerMin(citizen.getLeashTimerMin());
+        clonedCitizen.setLeashTimerMax(citizen.getLeashTimerMax());
+        clonedCitizen.setHardLeashDistance(citizen.getHardLeashDistance());
+        clonedCitizen.setDefaultHotbarSlot(citizen.getDefaultHotbarSlot());
+        clonedCitizen.setRandomIdleHotbarSlot(citizen.getRandomIdleHotbarSlot());
+        clonedCitizen.setChanceToEquipFromIdleHotbarSlot(citizen.getChanceToEquipFromIdleHotbarSlot());
+        clonedCitizen.setDefaultOffHandSlot(citizen.getDefaultOffHandSlot());
+        clonedCitizen.setNighttimeOffhandSlot(citizen.getNighttimeOffhandSlot());
+        clonedCitizen.setKnockbackScale(citizen.getKnockbackScale());
+        clonedCitizen.setWeapons(new ArrayList<>(citizen.getWeapons()));
+        clonedCitizen.setOffHandItems(new ArrayList<>(citizen.getOffHandItems()));
+        clonedCitizen.setCombatMessageTargetGroups(new ArrayList<>(citizen.getCombatMessageTargetGroups()));
+        clonedCitizen.setFlockArray(new ArrayList<>(citizen.getFlockArray()));
+        clonedCitizen.setDisableDamageGroups(new ArrayList<>(citizen.getDisableDamageGroups()));
+
+        plugin.getCitizensManager().addCitizen(clonedCitizen, true);
+        playerRef.sendMessage(Message.raw("Citizen '" + citizen.getName() + "' cloned at your position!").color(Color.GREEN));
+        return true;
+    }
+
+    private void removeCitizen(@Nonnull PlayerRef playerRef, @Nonnull CitizenData citizen) {
+        plugin.getCitizensManager().removeCitizen(citizen.getId());
+        playerRef.sendMessage(Message.raw("Citizen '" + citizen.getName() + "' removed!").color(Color.GREEN));
     }
 
     private void openRenameGroupGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store, @Nonnull String oldGroupName) {
@@ -3109,6 +3129,17 @@ public class CitizensUI {
             isPlayerModel[0] = false;
             citizen.setPlayerModel(false);
             openEditCitizenGUI(playerRef, store, citizen);
+        });
+
+        page.addEventListener("edit-tp-btn", CustomUIEventBindingType.Activating, event ->
+                teleportPlayerToCitizen(playerRef, citizen));
+
+        page.addEventListener("edit-clone-btn", CustomUIEventBindingType.Activating, event ->
+                cloneCitizenToPlayer(playerRef, citizen));
+
+        page.addEventListener("edit-remove-btn", CustomUIEventBindingType.Activating, event -> {
+            removeCitizen(playerRef, citizen);
+            openCitizensGUI(playerRef, store, Tab.MANAGE);
         });
 
         page.addEventListener("edit-commands-btn", CustomUIEventBindingType.Activating, event -> {

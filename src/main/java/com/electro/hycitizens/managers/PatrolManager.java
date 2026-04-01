@@ -209,7 +209,7 @@ public class PatrolManager {
 
         switch (recoveryStage) {
             case 0 -> {
-                getLogger().atInfo().log("Patrol soft reset for citizen '" + citizen.getId() + "' at waypoint " + waypointIndex + " after " + (now - session.lastProgressAtMs) + "ms without progress.");
+                //getLogger().atInfo().log("Patrol soft reset for citizen '" + citizen.getId() + "' at waypoint " + waypointIndex + " after " + (now - session.lastProgressAtMs) + "ms without progress.");
                 Ref<EntityStore> targetRef = ensureMoveTarget(citizen, world, path.getWaypoints().get(waypointIndex).toVector3d());
                 if (targetRef != null && targetRef.isValid()) {
                     TransformComponent targetTransform = targetRef.getStore().getComponent(targetRef, TransformComponent.getComponentType());
@@ -220,7 +220,7 @@ public class PatrolManager {
             }
             case 1 -> {
                 int nearestIndex = findNearestWaypointIndex(path, npcPosition);
-                getLogger().atInfo().log("Patrol route reset for citizen '" + citizen.getId() + "' to waypoint " + nearestIndex + " after repeated stall.");
+                //getLogger().atInfo().log("Patrol route reset for citizen '" + citizen.getId() + "' to waypoint " + nearestIndex + " after repeated stall.");
                 restartPatrolInternal(citizen, world, path, nearestIndex, true);
                 PatrolSession restartedSession = activeSessions.get(citizen.getId());
                 if (restartedSession != null) {
@@ -229,7 +229,7 @@ public class PatrolManager {
                 }
             }
             default -> {
-                getLogger().atWarning().log("Patrol teleport reset for citizen '" + citizen.getId() + "' after repeated stall. Returning to spawn and restarting patrol.");
+                //getLogger().atWarning().log("Patrol teleport reset for citizen '" + citizen.getId() + "' after repeated stall. Returning to spawn and restarting patrol.");
                 citizensManager.teleportCitizenToSpawn(citizen);
                 restartPatrolInternal(citizen, world, path, 0, true);
                 PatrolSession restartedSession = activeSessions.get(citizen.getId());

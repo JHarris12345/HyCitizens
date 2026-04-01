@@ -1801,24 +1801,17 @@ public class CitizensManager {
 
         // Regular model spawning
         float scale = Math.max((float)0.01, citizen.getScale());
-        Map<String, String> randomAttachmentIds = new HashMap<>();
-        Model citizenModel = new Model.ModelReference(citizen.getModelId(), scale, randomAttachmentIds).toModel();
-
-        if (citizenModel == null) {
-            citizensCurrentlySpawning.remove(citizen.getId());
-            getLogger().atWarning().log("Failed to spawn citizen NPC: " + citizen.getName() + ". The model ID is invalid. Try updating the model ID.");
-            return;
-        }
 
         String roleName = resolveRoleName(citizen);
 
+        // Pass null for model so the NPC role handles model resolution. This fixes issues with some models like Kweebecs.
         Pair<Ref<EntityStore>, NPCEntity> npc = NPCPlugin.get().spawnEntity(
                 world.getEntityStore().getStore(),
                 NPCPlugin.get().getIndex(roleName),
                 citizen.getPosition(),
                 citizen.getRotation(),
-                citizenModel,
                 null,
+                (npcComponent, holder, store) -> npcComponent.setInitialModelScale(scale),
                 null
         );
 
@@ -1839,10 +1832,10 @@ public class CitizensManager {
             PersistentModel persistentModel = store.getComponent(ref, PersistentModel.getComponentType());
             if (persistentModel != null) {
                 persistentModel.setModelReference(new Model.ModelReference(
-                        citizenModel.getModelAssetId(),
-                        citizenModel.getScale(),
-                        citizenModel.getRandomAttachmentIds(),
-                        citizenModel.getAnimationSetMap() == null
+                        citizen.getModelId(),
+                        scale,
+                        null,
+                        true
                 ));
             }
         }
@@ -3667,8 +3660,7 @@ public class CitizensManager {
         state.lastProgressAtMs = now;
         state.lastProgressPosition = new Vector3d(citizen.getPosition().x, citizen.getPosition().y, citizen.getPosition().z);
 
-        getLogger().atInfo().log("Wander reset for citizen '" + citizen.getId()
-                + "' after " + stalledForMs + "ms without movement. Returning to spawn.");
+        //getLogger().atInfo().log("Wander reset for citizen '" + citizen.getId() + "' after " + stalledForMs + "ms without movement. Returning to spawn.");
         teleportCitizenToSpawn(citizen);
     }
 

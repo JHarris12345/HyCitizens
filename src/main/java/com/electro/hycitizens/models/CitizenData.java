@@ -37,11 +37,17 @@ public class CitizenData {
     private Ref<EntityStore> npcRef;
     public final Map<UUID, Direction> lastLookDirections = new ConcurrentHashMap<>();
     private transient Map<UUID, ScheduledFuture<?>> pendingLookResetTasks = new ConcurrentHashMap<>();
+    public final Map<UUID, Direction> lastNametagLookDirections = new ConcurrentHashMap<>();
+    private transient Map<UUID, ScheduledFuture<?>> pendingNametagLookResetTasks = new ConcurrentHashMap<>();
     private boolean rotateTowardsPlayer;
     private float lookAtDistance = 25.0f;
     private boolean hideNametag = false;
     private boolean hideNpc = false;
     private float nametagOffset;
+    private boolean modelNametagEnabled = false;
+    private String nametagModelId = "";
+    private float nametagModelScale = 1.0f;
+    private boolean rotateNametagTowardsPlayer = true;
     private boolean fKeyInteractionEnabled;
     private boolean forceFKeyInteractionText;
 
@@ -199,6 +205,10 @@ public class CitizenData {
 
         this.nametagOffset = 0;
         this.hideNametag = false;
+        this.modelNametagEnabled = false;
+        this.nametagModelId = "";
+        this.nametagModelScale = 1.0f;
+        this.rotateNametagTowardsPlayer = true;
 
         this.fKeyInteractionEnabled = false;
     }
@@ -446,6 +456,39 @@ public class CitizenData {
         return nametagOffset;
     }
 
+    public boolean isModelNametagEnabled() {
+        return modelNametagEnabled;
+    }
+
+    public void setModelNametagEnabled(boolean modelNametagEnabled) {
+        this.modelNametagEnabled = modelNametagEnabled;
+    }
+
+    @Nonnull
+    public String getNametagModelId() {
+        return nametagModelId;
+    }
+
+    public void setNametagModelId(@Nullable String nametagModelId) {
+        this.nametagModelId = nametagModelId != null ? nametagModelId : "";
+    }
+
+    public float getNametagModelScale() {
+        return nametagModelScale;
+    }
+
+    public void setNametagModelScale(float nametagModelScale) {
+        this.nametagModelScale = nametagModelScale;
+    }
+
+    public boolean isRotateNametagTowardsPlayer() {
+        return rotateNametagTowardsPlayer;
+    }
+
+    public void setRotateNametagTowardsPlayer(boolean rotateNametagTowardsPlayer) {
+        this.rotateNametagTowardsPlayer = rotateNametagTowardsPlayer;
+    }
+
     @Nullable
     public PlayerSkin getCachedSkin() {
         return cachedSkin;
@@ -569,6 +612,14 @@ public class CitizenData {
             pendingLookResetTasks = new ConcurrentHashMap<>();
         }
         return pendingLookResetTasks;
+    }
+
+    @Nonnull
+    public Map<UUID, ScheduledFuture<?>> getPendingNametagLookResetTasks() {
+        if (pendingNametagLookResetTasks == null) {
+            pendingNametagLookResetTasks = new ConcurrentHashMap<>();
+        }
+        return pendingNametagLookResetTasks;
     }
 
     @Nonnull

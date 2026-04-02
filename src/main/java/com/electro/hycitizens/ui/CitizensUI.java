@@ -38,6 +38,16 @@ public class CitizensUI {
     private final HyCitizensPlugin plugin;
     private final Map<UUID, String> pendingFollowSelections = new ConcurrentHashMap<>();
 
+    private record NametagSettingsState(
+            String name,
+            float offset,
+            boolean hideNametag,
+            boolean modelEnabled,
+            String modelId,
+            float modelScale,
+            boolean rotateModelTowardsPlayer
+    ) {}
+
     private String generateAnimationDropdownOptions(String selectedValue, String modelId) {
         StringBuilder sb = new StringBuilder();
 
@@ -76,6 +86,40 @@ public class CitizensUI {
             sb.append(">").append(entity).append("</option>\n");
         }
         return sb.toString();
+    }
+
+    private String generateModelDropdownOptions(String selectedValue, boolean allowEmpty) {
+        StringBuilder sb = new StringBuilder();
+        if (allowEmpty) {
+            boolean noneSelected = selectedValue == null || selectedValue.isBlank();
+            sb.append("<option value=\"\"");
+            if (noneSelected) {
+                sb.append(" selected");
+            }
+            sb.append(">Select a model</option>\n");
+        }
+
+        sb.append(generateEntityDropdownOptions(selectedValue));
+        return sb.toString();
+    }
+
+    private String buildNametagSummary(String name, float nametagOffset, boolean hideNametag,
+                                       boolean modelNametagEnabled, String nametagModelId,
+                                       float nametagModelScale, boolean rotateNametagTowardsPlayer) {
+        if (hideNametag) {
+            return "Nametag hidden";
+        }
+
+        if (modelNametagEnabled) {
+            String resolvedModelId = nametagModelId == null || nametagModelId.isBlank() ? "unselected" : nametagModelId.trim();
+            return "Model nametag: " + resolvedModelId
+                    + " | Scale: " + nametagModelScale
+                    + " | Offset: " + nametagOffset
+                    + " | Rotate to players: " + (rotateNametagTowardsPlayer ? "On" : "Off");
+        }
+
+        int lineCount = splitNametagLines(name).size();
+        return "Text nametag: " + Math.max(1, lineCount) + " line(s) | Offset: " + nametagOffset;
     }
 
     private String generateGroupDropdownOptions(String selectedValue, List<String> allGroups) {
@@ -341,6 +385,10 @@ public class CitizensUI {
         public float getScale() { return citizen.getScale(); }
         public String getGroup() { return escapeHtml(citizen.getGroup()); }
         public float getNametagOffset() { return citizen.getNametagOffset(); }
+        public boolean isModelNametagEnabled() { return citizen.isModelNametagEnabled(); }
+        public String getNametagModelId() { return escapeHtml(citizen.getNametagModelId()); }
+        public float getNametagModelScale() { return citizen.getNametagModelScale(); }
+        public boolean isRotateNametagTowardsPlayer() { return citizen.isRotateNametagTowardsPlayer(); }
         public boolean isPlayerModel() { return citizen.isPlayerModel(); }
         public boolean isUseLiveSkin() { return citizen.isUseLiveSkin(); }
         public String getSkinUsername() { return escapeHtml(citizen.getSkinUsername()); }
@@ -1277,12 +1325,14 @@ public class CitizensUI {
     }
 
     public void openCreateCitizenGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store) {
-        openCreateCitizenGUI(playerRef, store, true, "", 0, false, false, "",
+        openCreateCitizenGUI(playerRef, store, true, "", 0, false, false,
+                false, "", 1.0f, true, "",
                 1.0f, "", "", false, false, "", true, "", 25.0f);
     }
 
     public void openCreateCitizenGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store,
                                      boolean isPlayerModel, String name, float nametagOffset, boolean hideNametag, boolean hideNpc,
+                                     boolean modelNametagEnabled, String nametagModelId, float nametagModelScale, boolean rotateNametagTowardsPlayer,
                                      String modelId, float scale, String permission, String permMessage, boolean useLiveSkin,
                                      boolean preserveState, String skinUsername, boolean rotateTowardsPlayer,
                                      String group, float lookAtDistance) {
@@ -1294,8 +1344,6 @@ public class CitizensUI {
         TemplateProcessor template = createBaseTemplate()
                 .setVariable("isPlayerModel", isPlayerModel)
                 .setVariable("name", escapeHtml(name))
-                .setVariable("nametagOffset", nametagOffset)
-                .setVariable("hideNametag", hideNametag)
                 .setVariable("hideNpc", hideNpc)
                 .setVariable("group", escapeHtml(group))
                 .setVariable("groupOptions", groupOptionsHTML)
@@ -1307,6 +1355,8 @@ public class CitizensUI {
                 .setVariable("skinUsername", escapeHtml(skinUsername))
                 .setVariable("rotateTowardsPlayer", rotateTowardsPlayer)
                 .setVariable("lookAtDistance", lookAtDistance)
+                .setVariable("nametagSummary", buildNametagSummary(name, nametagOffset, hideNametag, modelNametagEnabled,
+                        nametagModelId, nametagModelScale, rotateNametagTowardsPlayer))
                 .setVariable("entityOptions", generateEntityDropdownOptions(modelId.isEmpty() ? "PlayerTestModel_V" : modelId));
 
         String html = template.process(getSharedStyles() + """
@@ -1334,41 +1384,19 @@ public class CitizensUI {
                             <!-- Basic Information Section -->
                             <div class="section">
                                 {{@sectionHeader:title=Basic Information,description=Set the citizen's name and display settings}}
-                
+                 
                                 <div class="form-row" style="horizontal-align: center;">
-                                     <div class="form-col-fixed" style="anchor-width: 400;">
+                                     <div class="form-col-fixed" style="anchor-width: 460;">
                                          <div class="form-group">
                                              <p class="form-label">Citizen Name *</p>
                                              <input type="text" id="citizen-name" class="form-input" value="{{$name}}"\s
                                                     placeholder="Enter a display name" />
-                                             <p class="form-hint" style="text-align: center;">This will be displayed above the NPC</p>
                                              <div class="spacer-xs"></div>
-                                             <button id="edit-nametag-lines-btn" class="secondary-button small-secondary-button" style="anchor-width: 190;">Nametag Lines</button>
+                                             <button id="nametag-settings-btn" class="secondary-button small-secondary-button" style="anchor-width: 210;">Nametag Settings</button>
+                                             <div class="spacer-xs"></div>
+                                             <p class="form-hint" style="text-align: center;">{{$nametagSummary}}</p>
                                          </div>
                                      </div>
-                
-                                     <div class="spacer-h-md"></div>
-                
-                                     <div class="form-col-fixed" style="anchor-width: 150;">
-                                         <div class="form-group">
-                                             <p class="form-label">Nametag Offset</p>
-                                             <input type="number" id="nametag-offset" class="form-input"
-                                                    value="{{$nametagOffset}}"
-                                                    placeholder="0.0"
-                                                    min="-500" max="500" step="0.25"
-                                                    data-hyui-max-decimal-places="2" />
-                                         </div>
-                                     </div>
-                                 </div>
-                
-                                <div class="spacer-sm"></div>
-                
-                                <div class="checkbox-row">
-                                    <input type="checkbox" id="hide-nametag-check" {{#if hideNametag}}checked{{/if}} />
-                                    <div style="layout: top; flex-weight: 0; text-align: center;">
-                                        <p class="checkbox-label">Hide Nametag</p>
-                                        <p class="checkbox-description">Hide the name displayed above the citizen</p>
-                                    </div>
                                 </div>
 
                                 <div class="spacer-sm"></div>
@@ -1577,6 +1605,7 @@ public class CitizensUI {
                 .fromHtml(html);
 
         setupCreateCitizenListeners(page, playerRef, store, isPlayerModel, name, nametagOffset, hideNametag, hideNpc,
+                modelNametagEnabled, nametagModelId, nametagModelScale, rotateNametagTowardsPlayer,
                 modelId, scale, permission, permMessage, useLiveSkin, skinUsername, rotateTowardsPlayer, group, lookAtDistance);
 
         page.open(store);
@@ -1593,9 +1622,17 @@ public class CitizensUI {
                 .setVariable("useLiveSkin", citizen.isUseLiveSkin())
                 .setVariable("rotateTowardsPlayer", citizen.getRotateTowardsPlayer())
                 .setVariable("lookAtDistance", citizen.getLookAtDistance())
-                .setVariable("hideNametag", citizen.isHideNametag())
                 .setVariable("hideNpc", citizen.isHideNpc())
                 .setVariable("groupOptions", groupOptionsHTML)
+                .setVariable("nametagSummary", buildNametagSummary(
+                        citizen.getName(),
+                        citizen.getNametagOffset(),
+                        citizen.isHideNametag(),
+                        citizen.isModelNametagEnabled(),
+                        citizen.getNametagModelId(),
+                        citizen.getNametagModelScale(),
+                        citizen.isRotateNametagTowardsPlayer()
+                ))
                 .setVariable("entityOptions", generateEntityDropdownOptions(citizen.getModelId()));
 
         String html = template.process(getSharedStyles() + """
@@ -1618,43 +1655,21 @@ public class CitizensUI {
                             <!-- Basic Information Section -->
                             <div class="section">
                                 {{@sectionHeader:title=Basic Information,description=Set the citizen's name and display settings}}
-                
+                 
                                 <div class="form-row" style="horizontal-align: center;">
-                                    <div class="form-col-fixed" style="anchor-width: 400;">
+                                    <div class="form-col-fixed" style="anchor-width: 460;">
                                         <div class="form-group">
                                             <p class="form-label">Citizen Name *</p>
                                             <input type="text" id="citizen-name" class="form-input" value="{{$citizen.name}}"\s
                                                    placeholder="Enter a display name" maxlength="32" />
-                                            <p class="form-hint" style="text-align: center;">This will be displayed above the NPC</p>
                                             <div class="spacer-xs"></div>
-                                            <button id="edit-nametag-lines-btn" class="secondary-button small-secondary-button" style="anchor-width: 190;">Nametag Lines</button>
-                                        </div>
-                                    </div>
-                
-                                    <div class="spacer-h-md"></div>
-                
-                                    <div class="form-col-fixed" style="anchor-width: 150;">
-                                        <div class="form-group">
-                                            <p class="form-label">Nametag Offset</p>
-                                            <input type="number" id="nametag-offset" class="form-input"
-                                                   value="{{$citizen.nametagOffset}}"
-                                                   placeholder="0.0"
-                                                   min="-500" max="500" step="0.25"
-                                                   data-hyui-max-decimal-places="2" />
+                                            <button id="nametag-settings-btn" class="secondary-button small-secondary-button" style="anchor-width: 210;">Nametag Settings</button>
+                                            <div class="spacer-xs"></div>
+                                            <p class="form-hint" style="text-align: center;">{{$nametagSummary}}</p>
                                         </div>
                                     </div>
                                 </div>
-                
-                                <div class="spacer-sm"></div>
-                
-                                <div class="checkbox-row">
-                                    <input type="checkbox" id="hide-nametag-check" {{#if hideNametag}}checked{{/if}} />
-                                    <div style="layout: top; flex-weight: 0; text-align: center;">
-                                        <p class="checkbox-label">Hide Nametag</p>
-                                        <p class="checkbox-description">Hide the name displayed above the citizen</p>
-                                    </div>
-                                </div>
-
+                 
                                 <div class="spacer-sm"></div>
 
                                 <div class="checkbox-row">
@@ -2389,6 +2404,10 @@ public class CitizensUI {
 
         clonedCitizen.setNametagOffset(citizen.getNametagOffset());
         clonedCitizen.setHideNametag(citizen.isHideNametag());
+        clonedCitizen.setModelNametagEnabled(citizen.isModelNametagEnabled());
+        clonedCitizen.setNametagModelId(citizen.getNametagModelId());
+        clonedCitizen.setNametagModelScale(citizen.getNametagModelScale());
+        clonedCitizen.setRotateNametagTowardsPlayer(citizen.isRotateNametagTowardsPlayer());
         clonedCitizen.setHideNpc(citizen.isHideNpc());
         clonedCitizen.setNpcHelmet(citizen.getNpcHelmet());
         clonedCitizen.setNpcChest(citizen.getNpcChest());
@@ -2703,10 +2722,251 @@ public class CitizensUI {
         page.open(store);
     }
 
+    private void openNametagSettingsGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store,
+                                        @Nonnull String currentName, float currentNametagOffset,
+                                        boolean currentHideNametag, boolean currentModelNametagEnabled,
+                                        @Nonnull String currentNametagModelId, float currentNametagModelScale,
+                                        boolean currentRotateNametagTowardsPlayer,
+                                        @Nonnull Consumer<NametagSettingsState> onDone,
+                                        @Nonnull Runnable onCancel) {
+        List<String> lines = splitNametagLines(currentName);
+
+        TemplateProcessor template = createBaseTemplate()
+                .setVariable("hideNametag", currentHideNametag)
+                .setVariable("modelEnabled", currentModelNametagEnabled)
+                .setVariable("nametagOffset", currentNametagOffset)
+                .setVariable("nametagModelId", currentNametagModelId)
+                .setVariable("nametagModelScale", currentNametagModelScale)
+                .setVariable("rotateModelTowardsPlayer", currentRotateNametagTowardsPlayer)
+                .setVariable("lineCount", lines.size())
+                .setVariable("nametagSummary", buildNametagSummary(
+                        currentName,
+                        currentNametagOffset,
+                        currentHideNametag,
+                        currentModelNametagEnabled,
+                        currentNametagModelId,
+                        currentNametagModelScale,
+                        currentRotateNametagTowardsPlayer
+                ))
+                .setVariable("modelOptions", generateModelDropdownOptions(currentNametagModelId, true));
+
+        String html = template.process(getSharedStyles() + """
+                <div class="page-overlay">
+                    <div class="main-container decorated-container" style="anchor-width: 760; anchor-height: 760;">
+                        <div class="header container-title">
+                            <div class="header-content">
+                                <p class="header-title">Nametag Settings</p>
+                            </div>
+                        </div>
+                        <div class="body" data-hyui-scrollbar-style='"Common.ui" "DefaultScrollbarStyle"' style="layout-mode: TopScrolling;">
+                            <p class="page-description">{{$nametagSummary}}</p>
+                            <div class="spacer-sm"></div>
+
+                            <div class="section">
+                                {{@sectionHeader:title=Display Mode,description=Choose between text lines or a model nametag}}
+                                <div class="toggle-group">
+                                    <button id="nametag-mode-text" class="secondary-button toggle-btn{{#if !modelEnabled}} toggle-active{{/if}}" style="anchor-width: 320; anchor-height: 48;">Text Nametag</button>
+                                    <button id="nametag-mode-model" class="secondary-button toggle-btn{{#if modelEnabled}} toggle-active{{/if}}" style="anchor-width: 320; anchor-height: 48;">Model Nametag</button>
+                                </div>
+                            </div>
+
+                            <div class="spacer-md"></div>
+
+                            <div class="section">
+                                {{@sectionHeader:title=General,description=Shared nametag options}}
+                                <div class="form-row" style="horizontal-align: center;">
+                                    <div class="form-col-fixed" style="anchor-width: 180;">
+                                        <div class="form-group">
+                                            <p class="form-label">Nametag Offset</p>
+                                            <input type="number" id="nametag-offset" class="form-input"
+                                                   value="{{$nametagOffset}}"
+                                                   placeholder="0.0"
+                                                   min="-500" max="500" step="0.25"
+                                                   data-hyui-max-decimal-places="2" />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="spacer-sm"></div>
+
+                                <div class="checkbox-row">
+                                    <input type="checkbox" id="hide-nametag-check" {{#if hideNametag}}checked{{/if}} />
+                                    <div style="layout: top; flex-weight: 0; text-align: center;">
+                                        <p class="checkbox-label">Hide Nametag</p>
+                                        <p class="checkbox-description">Disable any text or model above the citizen</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="spacer-md"></div>
+
+                            {{#if modelEnabled}}
+                            <div class="section">
+                                {{@sectionHeader:title=Model,description=Pick the model used instead of text}}
+                                <div class="card">
+                                    <div class="card-body">
+                                        <div class="form-group">
+                                            <p class="form-label" style="text-align: center;">Select Model</p>
+                                            <select id="nametag-model-dropdown" value="{{$nametagModelId}}" data-hyui-showlabel="true">
+                                                {{$modelOptions}}
+                                            </select>
+                                            <p class="form-hint" style="text-align: center;">The dropdown includes every loaded model asset</p>
+                                        </div>
+
+                                        <div class="spacer-sm"></div>
+                                        <div class="divider"></div>
+                                        <div class="spacer-sm"></div>
+
+                                        <div class="form-group">
+                                            <p class="form-label" style="text-align: center;">Or Enter A Model ID</p>
+                                            <input type="text" id="nametag-model-id" class="form-input" value="{{$nametagModelId}}"
+                                                   placeholder="e.g., Sheep, PlayerTestModel_V" maxlength="96" style="anchor-width: 260;" />
+                                        </div>
+
+                                        <div class="spacer-sm"></div>
+
+                                        <div class="form-row" style="horizontal-align: center;">
+                                            <div style="anchor-width: 220;">
+                                                {{@numberField:id=nametag-model-scale,label=Model Scale,value={{$nametagModelScale}},placeholder=1.0,min=0.01,max=500,step=0.1,decimals=2}}
+                                            </div>
+                                        </div>
+
+                                        <div class="spacer-sm"></div>
+
+                                        <div class="checkbox-row">
+                                            <input type="checkbox" id="rotate-nametag-towards-player" {{#if rotateModelTowardsPlayer}}checked{{/if}} />
+                                            <div style="layout: top; flex-weight: 0; text-align: center;">
+                                                <p class="checkbox-label">Rotate Model Towards Players</p>
+                                                <p class="checkbox-description">Rotates the model towards the player</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {{else}}
+                            <div class="section">
+                                {{@sectionHeader:title=Text Lines,description=Manage the lines shown when using text nametags}}
+                                <div class="card">
+                                    <div class="card-body" style="layout: top; horizontal-align: center;">
+                                        <p class="form-hint" style="text-align: center;">{{$lineCount}} configured line(s)</p>
+                                        <div class="spacer-xs"></div>
+                                        <button id="edit-nametag-lines-btn" class="secondary-button" style="anchor-width: 220;">Edit Text Lines</button>
+                                    </div>
+                                </div>
+                            </div>
+                            {{/if}}
+
+                            <div class="spacer-lg"></div>
+                        </div>
+                        <div class="footer">
+                            <button id="cancel-btn" class="secondary-button">Cancel</button>
+                            <div class="spacer-h-md"></div>
+                            <button id="done-btn" class="secondary-button btn-wide">Done</button>
+                        </div>
+                    </div>
+                </div>
+                """);
+
+        PageBuilder page = PageBuilder.pageForPlayer(playerRef)
+                .withLifetime(CustomPageLifetime.CanDismiss)
+                .fromHtml(html);
+
+        final String[] editedName = {currentName};
+        final float[] nametagOffset = {currentNametagOffset};
+        final boolean[] hideNametag = {currentHideNametag};
+        final boolean[] modelEnabled = {currentModelNametagEnabled};
+        final String[] nametagModelId = {currentNametagModelId};
+        final float[] nametagModelScale = {currentNametagModelScale};
+        final boolean[] rotateModelTowardsPlayer = {currentRotateNametagTowardsPlayer};
+
+        page.addEventListener("nametag-mode-text", CustomUIEventBindingType.Activating, event ->
+                openNametagSettingsGUI(playerRef, store, editedName[0], nametagOffset[0], hideNametag[0],
+                        false, nametagModelId[0], nametagModelScale[0], rotateModelTowardsPlayer[0], onDone, onCancel));
+
+        page.addEventListener("nametag-mode-model", CustomUIEventBindingType.Activating, event ->
+                openNametagSettingsGUI(playerRef, store, editedName[0], nametagOffset[0], hideNametag[0],
+                        true, nametagModelId[0], nametagModelScale[0], rotateModelTowardsPlayer[0], onDone, onCancel));
+
+        page.addEventListener("nametag-offset", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+            ctx.getValue("nametag-offset", Double.class).ifPresent(val -> nametagOffset[0] = val.floatValue());
+            if (nametagOffset[0] == 0.0f) {
+                ctx.getValue("nametag-offset", String.class).ifPresent(val -> {
+                    try {
+                        nametagOffset[0] = Float.parseFloat(val);
+                    } catch (NumberFormatException ignored) {
+                    }
+                });
+            }
+        });
+
+        page.addEventListener("hide-nametag-check", CustomUIEventBindingType.ValueChanged, (event, ctx) ->
+                hideNametag[0] = ctx.getValue("hide-nametag-check", Boolean.class).orElse(false));
+
+        if (currentModelNametagEnabled) {
+            page.addEventListener("nametag-model-id", CustomUIEventBindingType.ValueChanged, (event, ctx) ->
+                    nametagModelId[0] = ctx.getValue("nametag-model-id", String.class).orElse(""));
+
+            page.addEventListener("nametag-model-dropdown", CustomUIEventBindingType.ValueChanged, (event, ctx) ->
+                    ctx.getValue("nametag-model-dropdown", String.class).ifPresent(val -> nametagModelId[0] = val));
+
+            try {
+                page.addEventListener("nametag-model-scale", CustomUIEventBindingType.ValueChanged, (event, ctx) ->
+                        ctx.getValue("nametag-model-scale", Double.class)
+                                .ifPresent(val -> nametagModelScale[0] = Math.max(0.01f, val.floatValue())));
+            } catch (IllegalArgumentException ignored) {
+            }
+
+            page.addEventListener("rotate-nametag-towards-player", CustomUIEventBindingType.ValueChanged, (event, ctx) ->
+                    rotateModelTowardsPlayer[0] = ctx.getValue("rotate-nametag-towards-player", Boolean.class).orElse(true));
+        } else {
+            page.addEventListener("edit-nametag-lines-btn", CustomUIEventBindingType.Activating, event ->
+                    openNametagLinesGUI(
+                            playerRef,
+                            store,
+                            editedName[0],
+                            updatedName -> openNametagSettingsGUI(playerRef, store, updatedName, nametagOffset[0], hideNametag[0],
+                                    modelEnabled[0], nametagModelId[0], nametagModelScale[0], rotateModelTowardsPlayer[0], onDone, onCancel),
+                            () -> openNametagSettingsGUI(playerRef, store, editedName[0], nametagOffset[0], hideNametag[0],
+                                    modelEnabled[0], nametagModelId[0], nametagModelScale[0], rotateModelTowardsPlayer[0], onDone, onCancel)
+                    ));
+        }
+
+        page.addEventListener("done-btn", CustomUIEventBindingType.Activating, event -> {
+            String trimmedModelId = nametagModelId[0].trim();
+            if (modelEnabled[0]) {
+                if (trimmedModelId.isEmpty()) {
+                    playerRef.sendMessage(Message.raw("Please select or enter a nametag model ID.").color(Color.RED));
+                    return;
+                }
+
+                if (ModelAsset.getAssetMap().getAsset(trimmedModelId) == null) {
+                    playerRef.sendMessage(Message.raw("That nametag model could not be found.").color(Color.RED));
+                    return;
+                }
+            }
+
+            onDone.accept(new NametagSettingsState(
+                    editedName[0],
+                    nametagOffset[0],
+                    hideNametag[0],
+                    modelEnabled[0],
+                    trimmedModelId,
+                    Math.max(0.01f, nametagModelScale[0]),
+                    rotateModelTowardsPlayer[0]
+            ));
+        });
+
+        page.addEventListener("cancel-btn", CustomUIEventBindingType.Activating, event -> onCancel.run());
+
+        page.open(store);
+    }
+
     private void setupCreateCitizenListeners(PageBuilder page, PlayerRef playerRef, Store<EntityStore> store,
                                              boolean initialIsPlayerModel, String initialName, float initialNametagOffset,
-                                             boolean initialHideNametag, boolean initialHideNpc, String initialModelId, float initialScale,
-                                             String initialPermission, String initialPermMessage, boolean initialUseLiveSkin,
+                                             boolean initialHideNametag, boolean initialHideNpc,
+                                             boolean initialModelNametagEnabled, String initialNametagModelId,
+                                             float initialNametagModelScale, boolean initialRotateNametagTowardsPlayer,
+                                             String initialModelId, float initialScale, String initialPermission, String initialPermMessage, boolean initialUseLiveSkin,
                                              String initialSkinUsername, boolean initialRotateTowardsPlayer,
                                              String initialGroup, float initialLookAtDistance) {
         final List<CommandAction> tempActions = new ArrayList<>();
@@ -2714,6 +2974,10 @@ public class CitizensUI {
         final float[] nametagOffset = {initialNametagOffset};
         final boolean[] hideNametag = {initialHideNametag};
         final boolean[] hideNpc = {initialHideNpc};
+        final boolean[] modelNametagEnabled = {initialModelNametagEnabled};
+        final String[] currentNametagModelId = {initialNametagModelId};
+        final float[] currentNametagModelScale = {initialNametagModelScale};
+        final boolean[] rotateNametagTowardsPlayer = {initialRotateNametagTowardsPlayer};
         final String[] currentModelId = {initialModelId.isEmpty() ? "PlayerTestModel_V" : initialModelId};
         final float[] currentScale = {initialScale};
         final String[] currentPermission = {initialPermission};
@@ -2781,42 +3045,30 @@ public class CitizensUI {
             // Defensive guard in case an older cached UI layout without this field is still open.
         }
 
-        page.addEventListener("edit-nametag-lines-btn", CustomUIEventBindingType.Activating, event -> {
-            openNametagLinesGUI(
-                    playerRef,
-                    store,
-                    currentName[0],
-                    updatedName -> openCreateCitizenGUI(
-                            playerRef, store, isPlayerModel[0], updatedName, nametagOffset[0], hideNametag[0], hideNpc[0],
-                            currentModelId[0], currentScale[0], currentPermission[0], currentPermMessage[0], useLiveSkin[0], true,
-                            skinUsername[0], rotateTowardsPlayer[0], currentGroup[0], lookAtDistance[0]
-                    ),
-                    () -> openCreateCitizenGUI(
-                            playerRef, store, isPlayerModel[0], currentName[0], nametagOffset[0], hideNametag[0], hideNpc[0],
-                            currentModelId[0], currentScale[0], currentPermission[0], currentPermMessage[0], useLiveSkin[0], true,
-                            skinUsername[0], rotateTowardsPlayer[0], currentGroup[0], lookAtDistance[0]
-                    )
-            );
-        });
-
-        page.addEventListener("nametag-offset", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
-            ctx.getValue("nametag-offset", Double.class)
-                    .ifPresent(val -> nametagOffset[0] = val.floatValue());
-
-            if (nametagOffset[0] == 0.0f) {
-                ctx.getValue("nametag-offset", String.class)
-                        .ifPresent(val -> {
-                            try {
-                                nametagOffset[0] = Float.parseFloat(val);
-                            } catch (NumberFormatException e) {
-                            }
-                        });
-            }
-        });
-
-        page.addEventListener("hide-nametag-check", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
-            hideNametag[0] = ctx.getValue("hide-nametag-check", Boolean.class).orElse(false);
-        });
+        page.addEventListener("nametag-settings-btn", CustomUIEventBindingType.Activating, event ->
+                openNametagSettingsGUI(
+                        playerRef,
+                        store,
+                        currentName[0],
+                        nametagOffset[0],
+                        hideNametag[0],
+                        modelNametagEnabled[0],
+                        currentNametagModelId[0],
+                        currentNametagModelScale[0],
+                        rotateNametagTowardsPlayer[0],
+                        updated -> openCreateCitizenGUI(
+                                playerRef, store, isPlayerModel[0], updated.name(), updated.offset(), updated.hideNametag(), hideNpc[0],
+                                updated.modelEnabled(), updated.modelId(), updated.modelScale(), updated.rotateModelTowardsPlayer(),
+                                currentModelId[0], currentScale[0], currentPermission[0], currentPermMessage[0], useLiveSkin[0], true,
+                                skinUsername[0], rotateTowardsPlayer[0], currentGroup[0], lookAtDistance[0]
+                        ),
+                        () -> openCreateCitizenGUI(
+                                playerRef, store, isPlayerModel[0], currentName[0], nametagOffset[0], hideNametag[0], hideNpc[0],
+                                modelNametagEnabled[0], currentNametagModelId[0], currentNametagModelScale[0], rotateNametagTowardsPlayer[0],
+                                currentModelId[0], currentScale[0], currentPermission[0], currentPermMessage[0], useLiveSkin[0], true,
+                                skinUsername[0], rotateTowardsPlayer[0], currentGroup[0], lookAtDistance[0]
+                        )
+                ));
 
         page.addEventListener("hide-npc-check", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
             hideNpc[0] = ctx.getValue("hide-npc-check", Boolean.class).orElse(false);
@@ -2859,13 +3111,15 @@ public class CitizensUI {
         });
 
         page.addEventListener("type-player", CustomUIEventBindingType.Activating, (event, ctx) -> {
-            openCreateCitizenGUI(playerRef, store, true, currentName[0], nametagOffset[0], hideNametag[0], hideNpc[0], currentModelId[0],
+            openCreateCitizenGUI(playerRef, store, true, currentName[0], nametagOffset[0], hideNametag[0], hideNpc[0],
+                    modelNametagEnabled[0], currentNametagModelId[0], currentNametagModelScale[0], rotateNametagTowardsPlayer[0], currentModelId[0],
                     currentScale[0], currentPermission[0], currentPermMessage[0], useLiveSkin[0], true,
                     skinUsername[0], rotateTowardsPlayer[0], currentGroup[0], lookAtDistance[0]);
         });
 
         page.addEventListener("type-entity", CustomUIEventBindingType.Activating, (event, ctx) -> {
-            openCreateCitizenGUI(playerRef, store, false, currentName[0], nametagOffset[0], hideNametag[0], hideNpc[0], currentModelId[0],
+            openCreateCitizenGUI(playerRef, store, false, currentName[0], nametagOffset[0], hideNametag[0], hideNpc[0],
+                    modelNametagEnabled[0], currentNametagModelId[0], currentNametagModelScale[0], rotateNametagTowardsPlayer[0], currentModelId[0],
                     currentScale[0], currentPermission[0], currentPermMessage[0], useLiveSkin[0], true,
                     skinUsername[0], rotateTowardsPlayer[0], currentGroup[0], lookAtDistance[0]);
         });
@@ -2925,6 +3179,10 @@ public class CitizensUI {
 
             citizen.setNametagOffset(nametagOffset[0]);
             citizen.setHideNametag(hideNametag[0]);
+            citizen.setModelNametagEnabled(modelNametagEnabled[0]);
+            citizen.setNametagModelId(currentNametagModelId[0].trim());
+            citizen.setNametagModelScale(currentNametagModelScale[0]);
+            citizen.setRotateNametagTowardsPlayer(rotateNametagTowardsPlayer[0]);
             citizen.setHideNpc(hideNpc[0]);
             citizen.setGroup(currentGroup[0]);
             citizen.setLookAtDistance(lookAtDistance[0]);
@@ -2972,6 +3230,10 @@ public class CitizensUI {
         final float[] nametagOffset = {citizen.getNametagOffset()};
         final boolean[] hideNametag = {citizen.isHideNametag()};
         final boolean[] hideNpc = {citizen.isHideNpc()};
+        final boolean[] modelNametagEnabled = {citizen.isModelNametagEnabled()};
+        final String[] currentNametagModelId = {citizen.getNametagModelId()};
+        final float[] currentNametagModelScale = {citizen.getNametagModelScale()};
+        final boolean[] rotateNametagTowardsPlayer = {citizen.isRotateNametagTowardsPlayer()};
         final String[] currentModelId = {citizen.getModelId()};
         final float[] currentScale = {citizen.getScale()};
         final String[] currentPermission = {citizen.getRequiredPermission()};
@@ -3059,38 +3321,36 @@ public class CitizensUI {
             // Defensive guard in case an older cached UI layout without this field is still open.
         }
 
-        page.addEventListener("edit-nametag-lines-btn", CustomUIEventBindingType.Activating, event -> {
-            openNametagLinesGUI(
-                    playerRef,
-                    store,
-                    citizen.getName(),
-                    updatedName -> {
-                        citizen.setName(updatedName);
-                        plugin.getCitizensManager().updateCitizenHologram(citizen, true);
-                        openEditCitizenGUI(playerRef, store, citizen);
-                    },
-                    () -> openEditCitizenGUI(playerRef, store, citizen)
-            );
-        });
-
-        page.addEventListener("nametag-offset", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
-            ctx.getValue("nametag-offset", Double.class)
-                    .ifPresent(val -> nametagOffset[0] = val.floatValue());
-
-            if (nametagOffset[0] == 0.0f) {
-                ctx.getValue("nametag-offset", String.class)
-                        .ifPresent(val -> {
-                            try {
-                                nametagOffset[0] = Float.parseFloat(val);
-                            } catch (NumberFormatException e) {
-                            }
-                        });
-            }
-        });
-
-        page.addEventListener("hide-nametag-check", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
-            hideNametag[0] = ctx.getValue("hide-nametag-check", Boolean.class).orElse(false);
-        });
+        page.addEventListener("nametag-settings-btn", CustomUIEventBindingType.Activating, event ->
+                openNametagSettingsGUI(
+                        playerRef,
+                        store,
+                        currentName[0],
+                        nametagOffset[0],
+                        hideNametag[0],
+                        modelNametagEnabled[0],
+                        currentNametagModelId[0],
+                        currentNametagModelScale[0],
+                        rotateNametagTowardsPlayer[0],
+                        updated -> {
+                            currentName[0] = updated.name();
+                            nametagOffset[0] = updated.offset();
+                            hideNametag[0] = updated.hideNametag();
+                            modelNametagEnabled[0] = updated.modelEnabled();
+                            currentNametagModelId[0] = updated.modelId();
+                            currentNametagModelScale[0] = updated.modelScale();
+                            rotateNametagTowardsPlayer[0] = updated.rotateModelTowardsPlayer();
+                            citizen.setName(currentName[0]);
+                            citizen.setNametagOffset(nametagOffset[0]);
+                            citizen.setHideNametag(hideNametag[0]);
+                            citizen.setModelNametagEnabled(modelNametagEnabled[0]);
+                            citizen.setNametagModelId(currentNametagModelId[0]);
+                            citizen.setNametagModelScale(currentNametagModelScale[0]);
+                            citizen.setRotateNametagTowardsPlayer(rotateNametagTowardsPlayer[0]);
+                            openEditCitizenGUI(playerRef, store, citizen);
+                        },
+                        () -> openEditCitizenGUI(playerRef, store, citizen)
+                ));
 
         page.addEventListener("hide-npc-check", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
             hideNpc[0] = ctx.getValue("hide-npc-check", Boolean.class).orElse(false);
@@ -3284,6 +3544,10 @@ public class CitizensUI {
             citizen.setSkinUsername(skinUsername[0].trim());
             citizen.setNametagOffset(nametagOffset[0]);
             citizen.setHideNametag(hideNametag[0]);
+            citizen.setModelNametagEnabled(modelNametagEnabled[0]);
+            citizen.setNametagModelId(currentNametagModelId[0].trim());
+            citizen.setNametagModelScale(currentNametagModelScale[0]);
+            citizen.setRotateNametagTowardsPlayer(rotateNametagTowardsPlayer[0]);
             citizen.setHideNpc(hideNpc[0]);
             citizen.setGroup(currentGroup[0]);
 

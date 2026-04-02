@@ -23,6 +23,7 @@ import com.hypixel.hytale.protocol.*;
 import com.hypixel.hytale.protocol.packets.entities.EntityUpdates;
 import com.hypixel.hytale.server.core.HytaleServer;
 import com.hypixel.hytale.server.core.asset.type.model.config.Model;
+import com.hypixel.hytale.server.core.asset.type.model.config.ModelAsset;
 import com.hypixel.hytale.server.core.cosmetics.CosmeticsModule;
 import com.hypixel.hytale.server.core.entity.AnimationUtils;
 import com.hypixel.hytale.server.core.entity.UUIDComponent;
@@ -228,15 +229,22 @@ public class CitizensManager {
                                 checkProximityAnimations(citizen, playerRef, distSq);
                             }
 
-                            if (withinLookDistance
+                            boolean shouldRotateCitizen = withinLookDistance
                                     && citizen.getRotateTowardsPlayer()
-                                    && citizen.getMovementBehavior().getType().equals("IDLE")) {
+                                    && citizen.getMovementBehavior().getType().equals("IDLE");
+                            if (shouldRotateCitizen) {
                                 cancelPendingLookReset(citizen, playerRef.getUuid());
                                 rotateCitizenToPlayer(citizen, playerRef);
-                                continue;
+                            } else {
+                                scheduleLookResetIfNeeded(citizen, playerRef.getUuid());
                             }
 
-                            scheduleLookResetIfNeeded(citizen, playerRef.getUuid());
+                            if (withinLookDistance && shouldRotateModelNametagTowardsPlayer(citizen, playerRef)) {
+                                cancelPendingNametagLookReset(citizen, playerRef.getUuid());
+                                rotateModelNametagToPlayer(citizen, playerRef);
+                            } else {
+                                scheduleNametagLookResetIfNeeded(citizen, playerRef.getUuid());
+                            }
                         }
                     }
                 });
@@ -332,6 +340,7 @@ public class CitizensManager {
                             );
 
                             nametagTransformComponent.setPosition(linePos);
+                            nametagTransformComponent.setRotation(npcTransformComponent.getRotation());
                         }
                     }
                 });
@@ -775,6 +784,10 @@ public class CitizensManager {
         citizenData.setHideNametag(config.getBoolean(basePath + ".hide-nametag", false));
         citizenData.setHideNpc(config.getBoolean(basePath + ".hide-npc", false));
         citizenData.setNametagOffset(config.getFloat(basePath + ".nametag-offset", 0));
+        citizenData.setModelNametagEnabled(config.getBoolean(basePath + ".nametag.model.enabled", false));
+        citizenData.setNametagModelId(config.getString(basePath + ".nametag.model.id", ""));
+        citizenData.setNametagModelScale(config.getFloat(basePath + ".nametag.model.scale", 1.0f));
+        citizenData.setRotateNametagTowardsPlayer(config.getBoolean(basePath + ".nametag.model.rotate-towards-player", true));
 
         // Backwards compatibility
         citizenData.setFKeyInteractionEnabled(config.getBoolean(basePath + ".f-key-interaction", true));
@@ -1258,6 +1271,10 @@ public class CitizensManager {
             config.set(basePath + ".hide-nametag", citizen.isHideNametag());
             config.set(basePath + ".hide-npc", citizen.isHideNpc());
             config.set(basePath + ".nametag-offset", citizen.getNametagOffset());
+            config.set(basePath + ".nametag.model.enabled", citizen.isModelNametagEnabled());
+            config.set(basePath + ".nametag.model.id", citizen.getNametagModelId());
+            config.set(basePath + ".nametag.model.scale", citizen.getNametagModelScale());
+            config.set(basePath + ".nametag.model.rotate-towards-player", citizen.isRotateNametagTowardsPlayer());
 
             // Save animation behaviors
             List<AnimationBehavior> animBehaviors = citizen.getAnimationBehaviors();
@@ -2121,9 +2138,153 @@ public class CitizensManager {
         return lines.get(0);
     }
 
+    @Nullable
+    private ModelAsset getNametagModelAsset(@Nonnull CitizenData citizen) {
+        if (!citizen.isModelNametagEnabled()) {
+            return null;
+        }
+
+        String modelId = citizen.getNametagModelId().trim();
+        if (modelId.isEmpty()) {
+            return null;
+        }
+
+        return ModelAsset.getAssetMap().getAsset(modelId);
+    }
+
+    private boolean shouldUseModelNametag(@Nonnull CitizenData citizen) {
+        return !citizen.isHideNametag() && getNametagModelAsset(citizen) != null;
+    }
+
+    private int getDesiredNametagEntityCount(@Nonnull CitizenData citizen) {
+        if (citizen.isHideNametag()) {
+            return 0;
+        }
+
+        if (shouldUseModelNametag(citizen)) {
+            return 1;
+        }
+
+        return getNonEmptyNametagLines(citizen).size();
+    }
+
+    @Nullable
+    private Model createNametagModel(@Nonnull CitizenData citizen) {
+        ModelAsset nametagAsset = getNametagModelAsset(citizen);
+        if (nametagAsset == null) {
+            return null;
+        }
+
+        float scale = Math.max(0.01f, citizen.getNametagModelScale());
+        return Model.createStaticScaledModel(nametagAsset, scale);
+    }
+
+    @Nullable
+    private Model.ModelReference createNametagModelReference(@Nonnull CitizenData citizen) {
+        ModelAsset nametagAsset = getNametagModelAsset(citizen);
+        if (nametagAsset == null) {
+            return null;
+        }
+
+        float scale = Math.max(0.01f, citizen.getNametagModelScale());
+        return new Model.ModelReference(nametagAsset.getId(), scale, null, true);
+    }
+
+    private void applyTextNametagDisplay(@Nonnull Store<EntityStore> store, @Nonnull Ref<EntityStore> ref, @Nonnull String lineText) {
+        store.removeComponentIfExists(ref, ModelComponent.getComponentType());
+        store.removeComponentIfExists(ref, PersistentModel.getComponentType());
+        store.putComponent(ref, Nameplate.getComponentType(), new Nameplate(lineText));
+    }
+
+    private void applyModelNametagDisplay(@Nonnull Store<EntityStore> store, @Nonnull Ref<EntityStore> ref, @Nonnull CitizenData citizen) {
+        Model model = createNametagModel(citizen);
+        if (model == null) {
+            store.removeComponentIfExists(ref, Nameplate.getComponentType());
+            store.removeComponentIfExists(ref, ModelComponent.getComponentType());
+            store.removeComponentIfExists(ref, PersistentModel.getComponentType());
+            return;
+        }
+
+        store.removeComponentIfExists(ref, Nameplate.getComponentType());
+        store.putComponent(ref, ModelComponent.getComponentType(), new ModelComponent(model));
+        Model.ModelReference modelReference = createNametagModelReference(citizen);
+        if (modelReference != null) {
+            store.putComponent(ref, PersistentModel.getComponentType(), new PersistentModel(modelReference));
+        }
+    }
+
+    @Nullable
+    private Holder<EntityStore> createNametagEntityHolder(@Nonnull World world, @Nonnull CitizenData citizen, int lineIndex,
+                                                          @Nonnull Vector3d linePos, @Nonnull Vector3f rotation,
+                                                          @Nullable String lineText) {
+        Holder<EntityStore> holder = EntityStore.REGISTRY.newHolder();
+
+        holder.putComponent(TransformComponent.getComponentType(), new TransformComponent(linePos, rotation));
+        holder.putComponent(HeadRotation.getComponentType(), new HeadRotation(rotation));
+        holder.ensureComponent(UUIDComponent.getComponentType());
+
+        holder.addComponent(
+                NetworkId.getComponentType(),
+                new NetworkId(world.getEntityStore().getStore().getExternalData().takeNextNetworkId())
+        );
+        holder.addComponent(CitizenNametagComponent.getComponentType(),
+                new CitizenNametagComponent(citizen.getId(), lineIndex));
+
+        if (shouldUseModelNametag(citizen)) {
+            Model model = createNametagModel(citizen);
+            Model.ModelReference modelReference = createNametagModelReference(citizen);
+            if (model == null) {
+                return null;
+            }
+
+            holder.addComponent(PropComponent.getComponentType(), PropComponent.get());
+            holder.addComponent(ModelComponent.getComponentType(), new ModelComponent(model));
+            if (modelReference != null) {
+                holder.addComponent(PersistentModel.getComponentType(), new PersistentModel(modelReference));
+            }
+        } else {
+            ProjectileComponent projectileComponent = new ProjectileComponent("Projectile");
+            holder.putComponent(ProjectileComponent.getComponentType(), projectileComponent);
+            if (projectileComponent.getProjectile() == null) {
+                projectileComponent.initialize();
+                if (projectileComponent.getProjectile() == null) {
+                    return null;
+                }
+            }
+            holder.addComponent(Nameplate.getComponentType(), new Nameplate(lineText == null ? "" : lineText));
+        }
+
+        return holder;
+    }
+
+    private void applyNametagEntityDisplay(@Nonnull Ref<EntityStore> entity, @Nonnull CitizenData citizen, int lineIndex,
+                                           @Nonnull Vector3d linePos, @Nonnull Vector3f rotation, @Nullable String lineText) {
+        TransformComponent transform = entity.getStore().getComponent(entity, TransformComponent.getComponentType());
+        if (transform != null) {
+            transform.setPosition(linePos);
+            transform.setRotation(rotation);
+        }
+        HeadRotation headRotation = entity.getStore().getComponent(entity, HeadRotation.getComponentType());
+        if (headRotation != null) {
+            headRotation.setRotation(rotation);
+        }
+
+        bindCitizenNametagIdentity(entity, citizen.getId(), lineIndex);
+
+        if (shouldUseModelNametag(citizen)) {
+            applyModelNametagDisplay(entity.getStore(), entity, citizen);
+        } else {
+            applyTextNametagDisplay(entity.getStore(), entity, lineText == null ? "" : lineText);
+        }
+    }
+
     public boolean shouldUseSeparateNametagEntities(@Nonnull CitizenData citizen) {
         if (citizen.isHideNametag()) {
             return false;
+        }
+
+        if (shouldUseModelNametag(citizen)) {
+            return true;
         }
 
         List<String> lines = getNonEmptyNametagLines(citizen);
@@ -2144,6 +2305,10 @@ public class CitizensManager {
 
     private boolean shouldUseInlineNpcNameplate(@Nonnull CitizenData citizen) {
         if (citizen.isHideNametag() || citizen.isHideNpc()) {
+            return false;
+        }
+
+        if (shouldUseModelNametag(citizen)) {
             return false;
         }
 
@@ -2359,7 +2524,8 @@ public class CitizensManager {
         }
 
         List<String> nametagLines = getNonEmptyNametagLines(citizen);
-        if (nametagLines.isEmpty()) {
+        int desiredEntityCount = getDesiredNametagEntityCount(citizen);
+        if (desiredEntityCount <= 0) {
             refreshNpcNameplate(citizen);
             despawnCitizenHologram(citizen);
             if (save) {
@@ -2421,39 +2587,18 @@ public class CitizensManager {
 
                     Vector3f hologramRot = new Vector3f(citizen.getRotation());
 
-                    // Controls spacing between each nameplate line
-                    for (int i = 0; i < nametagLines.size(); ++i) {
-                        String lineText = nametagLines.get(i);
-                        Vector3d linePos = getHologramLinePosition(baseHologramPos, nametagLines.size(), i);
-
-                        Holder<EntityStore> holder = EntityStore.REGISTRY.newHolder();
-
-                        ProjectileComponent projectileComponent = new ProjectileComponent("Projectile");
-                        holder.putComponent(ProjectileComponent.getComponentType(), projectileComponent);
-
-                        holder.putComponent(TransformComponent.getComponentType(), new TransformComponent(linePos, hologramRot));
-                        holder.ensureComponent(UUIDComponent.getComponentType());
-
-                        if (projectileComponent.getProjectile() == null) {
-                            projectileComponent.initialize();
-                            if (projectileComponent.getProjectile() == null) {
-                                continue;
-                            }
+                    for (int i = 0; i < desiredEntityCount; ++i) {
+                        String lineText = i < nametagLines.size() ? nametagLines.get(i) : null;
+                        Vector3d linePos = getHologramLinePosition(baseHologramPos, desiredEntityCount, i);
+                        Holder<EntityStore> holder = createNametagEntityHolder(world, citizen, i, linePos, hologramRot, lineText);
+                        if (holder == null) {
+                            continue;
                         }
-
-                        holder.addComponent(
-                                NetworkId.getComponentType(),
-                                new NetworkId(world.getEntityStore().getStore().getExternalData().takeNextNetworkId())
-                        );
 
                         UUIDComponent hologramUUIDComponent = holder.getComponent(UUIDComponent.getComponentType());
                         if (hologramUUIDComponent != null) {
                             citizen.getHologramLineUuids().add(hologramUUIDComponent.getUuid());
                         }
-
-                        holder.addComponent(CitizenNametagComponent.getComponentType(),
-                                new CitizenNametagComponent(citizen.getId(), i));
-                        holder.addComponent(Nameplate.getComponentType(), new Nameplate(lineText));
                         world.getEntityStore().getStore().addEntity(holder, AddReason.SPAWN);
                     }
 
@@ -2790,7 +2935,8 @@ public class CitizensManager {
         }
 
         List<String> nonEmptyLines = getNonEmptyNametagLines(citizen);
-        if (nonEmptyLines.isEmpty()) {
+        int desiredEntityCount = getDesiredNametagEntityCount(citizen);
+        if (desiredEntityCount <= 0) {
             despawnCitizenHologram(citizen);
             if (save) {
                 saveCitizen(citizen);
@@ -2800,7 +2946,7 @@ public class CitizensManager {
 
         List<UUID> existingUuids = citizen.getHologramLineUuids();
         int existingCount = existingUuids.size();
-        int newCount = nonEmptyLines.size();
+        int newCount = desiredEntityCount;
 
         Vector3d baseHologramPos = getBaseHologramPosition(citizen);
         Vector3f hologramRot = new Vector3f(citizen.getRotation());
@@ -2816,30 +2962,29 @@ public class CitizensManager {
                 return;
             }
 
+            if (!existingUuids.isEmpty()) {
+                Ref<EntityStore> firstEntity = world.getEntityRef(existingUuids.get(0));
+                if (firstEntity != null && firstEntity.isValid()) {
+                    boolean entityIsModelHost = firstEntity.getStore().getComponent(firstEntity, PropComponent.getComponentType()) != null;
+                    boolean shouldUseModelHost = shouldUseModelNametag(citizen);
+                    if (entityIsModelHost != shouldUseModelHost) {
+                        despawnCitizenHologram(citizen);
+                        spawnCitizenHologram(citizen, save);
+                        return;
+                    }
+                }
+            }
+
             // Update existing lines
             int linesToUpdate = Math.min(existingCount, newCount);
             for (int i = 0; i < linesToUpdate; i++) {
                 UUID uuid = existingUuids.get(i);
-                String lineText = nonEmptyLines.get(i);
+                String lineText = i < nonEmptyLines.size() ? nonEmptyLines.get(i) : null;
 
                 Ref<EntityStore> entity = world.getEntityRef(uuid);
                 if (entity != null) {
-                    // Update position
                     Vector3d linePos = getHologramLinePosition(baseHologramPos, newCount, i);
-
-                    TransformComponent transform = entity.getStore().getComponent(entity, TransformComponent.getComponentType());
-                    if (transform != null) {
-                        transform.setPosition(linePos);
-                        transform.setRotation(hologramRot);
-                    }
-
-                    bindCitizenNametagIdentity(entity, citizen.getId(), i);
-
-                    // Update text
-                    Nameplate nameplate = entity.getStore().getComponent(entity, Nameplate.getComponentType());
-                    if (nameplate != null) {
-                        nameplate.setText(lineText);
-                    }
+                    applyNametagEntityDisplay(entity, citizen, i, linePos, hologramRot, lineText);
                 }
             }
 
@@ -2859,38 +3004,18 @@ public class CitizensManager {
             // Spawn new lines if needed
             if (newCount > existingCount) {
                 for (int i = existingCount; i < newCount; i++) {
-                    String lineText = nonEmptyLines.get(i);
+                    String lineText = i < nonEmptyLines.size() ? nonEmptyLines.get(i) : null;
 
                     Vector3d linePos = getHologramLinePosition(baseHologramPos, newCount, i);
-
-                    Holder<EntityStore> holder = EntityStore.REGISTRY.newHolder();
-
-                    ProjectileComponent projectileComponent = new ProjectileComponent("Projectile");
-                    holder.putComponent(ProjectileComponent.getComponentType(), projectileComponent);
-
-                    holder.putComponent(TransformComponent.getComponentType(), new TransformComponent(linePos, hologramRot));
-                    holder.ensureComponent(UUIDComponent.getComponentType());
-
-                    if (projectileComponent.getProjectile() == null) {
-                        projectileComponent.initialize();
-                        if (projectileComponent.getProjectile() == null) {
-                            continue;
-                        }
+                    Holder<EntityStore> holder = createNametagEntityHolder(world, citizen, i, linePos, hologramRot, lineText);
+                    if (holder == null) {
+                        continue;
                     }
-
-                    holder.addComponent(
-                            NetworkId.getComponentType(),
-                            new NetworkId(world.getEntityStore().getStore().getExternalData().takeNextNetworkId())
-                    );
 
                     UUIDComponent hologramUUIDComponent = holder.getComponent(UUIDComponent.getComponentType());
                     if (hologramUUIDComponent != null) {
                         existingUuids.add(hologramUUIDComponent.getUuid());
                     }
-
-                    holder.addComponent(CitizenNametagComponent.getComponentType(),
-                            new CitizenNametagComponent(citizen.getId(), i));
-                    holder.addComponent(Nameplate.getComponentType(), new Nameplate(lineText));
                     world.getEntityStore().getStore().addEntity(holder, AddReason.SPAWN);
                 }
             }
@@ -2902,8 +3027,8 @@ public class CitizensManager {
     }
 
     public boolean rebindCitizenHologramEntities(@Nonnull World world, @Nonnull CitizenData citizen) {
-        List<String> nametagLines = getNonEmptyNametagLines(citizen);
-        if (nametagLines.isEmpty()) {
+        int desiredEntityCount = getDesiredNametagEntityCount(citizen);
+        if (desiredEntityCount <= 0) {
             citizen.getHologramLineUuids().clear();
             return true;
         }
@@ -2932,7 +3057,7 @@ public class CitizensManager {
         }
 
         List<UUID> reboundUuids = new ArrayList<>();
-        for (int i = 0; i < nametagLines.size(); i++) {
+        for (int i = 0; i < desiredEntityCount; i++) {
             Ref<EntityStore> ref = resolvedRefs.get(i);
             if (ref == null || !ref.isValid()) {
                 return false;
@@ -3050,6 +3175,8 @@ public class CitizensManager {
         for (CitizenData citizen : citizens.values()) {
             cancelPendingLookReset(citizen, playerUuid);
             citizen.lastLookDirections.remove(playerUuid);
+            cancelPendingNametagLookReset(citizen, playerUuid);
+            citizen.lastNametagLookDirections.remove(playerUuid);
             citizen.getSequentialMessageIndex().remove(playerUuid);
             citizen.getSequentialCommandIndex().remove(playerUuid);
             citizen.getSequentialDeathMessageIndex().remove(playerUuid);
@@ -3164,11 +3291,34 @@ public class CitizensManager {
             }
         }
         citizen.getPendingLookResetTasks().clear();
+
+        for (Map.Entry<UUID, ScheduledFuture<?>> entry : citizen.getPendingNametagLookResetTasks().entrySet()) {
+            ScheduledFuture<?> task = entry.getValue();
+            if (task != null) {
+                task.cancel(false);
+            }
+        }
+        citizen.getPendingNametagLookResetTasks().clear();
     }
 
     private void clearPendingLookResetState(@Nonnull CitizenData citizen, @Nonnull UUID playerUuid,
                                             @Nonnull ScheduledFuture<?> expectedTask) {
         citizen.getPendingLookResetTasks().remove(playerUuid, expectedTask);
+    }
+
+    @Nullable
+    private Ref<EntityStore> getPrimaryNametagRef(@Nonnull World world, @Nonnull CitizenData citizen) {
+        if (!shouldUseModelNametag(citizen)) {
+            return null;
+        }
+
+        List<UUID> hologramUuids = citizen.getHologramLineUuids();
+        if (hologramUuids.isEmpty() || hologramUuids.get(0) == null) {
+            return null;
+        }
+
+        Ref<EntityStore> nametagRef = world.getEntityRef(hologramUuids.get(0));
+        return nametagRef != null && nametagRef.isValid() ? nametagRef : null;
     }
 
     private boolean shouldRotateCitizenTowardsPlayer(@Nonnull CitizenData citizen, @Nonnull PlayerRef playerRef) {
@@ -3185,6 +3335,35 @@ public class CitizensManager {
         }
 
         if (!"IDLE".equals(citizen.getMovementBehavior().getType())) {
+            return false;
+        }
+
+        Vector3d citizenPos = citizen.getCurrentPosition() != null ? citizen.getCurrentPosition() : citizen.getPosition();
+        float maxDistance = Math.max(0.0f, citizen.getLookAtDistance());
+        double maxDistanceSq = maxDistance * maxDistance;
+
+        double dx = playerRef.getTransform().getPosition().x - citizenPos.x;
+        double dz = playerRef.getTransform().getPosition().z - citizenPos.z;
+        double distSq = dx * dx + dz * dz;
+        return distSq <= maxDistanceSq;
+    }
+
+    private boolean shouldRotateModelNametagTowardsPlayer(@Nonnull CitizenData citizen, @Nonnull PlayerRef playerRef) {
+        if (!isPlayerRefValid(playerRef)) {
+            return false;
+        }
+
+        if (!shouldUseModelNametag(citizen) || !citizen.isRotateNametagTowardsPlayer()) {
+            return false;
+        }
+
+        UUID worldUuid = citizen.getWorldUUID();
+        if (!worldUuid.equals(playerRef.getWorldUuid())) {
+            return false;
+        }
+
+        World world = Universe.get().getWorld(worldUuid);
+        if (world == null || getPrimaryNametagRef(world, citizen) == null) {
             return false;
         }
 
@@ -3233,6 +3412,149 @@ public class CitizensManager {
 
         EntityUpdates packet = new EntityUpdates(null, new EntityUpdate[] { entityUpdate });
         playerRef.getPacketHandler().write(packet);
+    }
+
+    private void rotateModelNametagToPlayer(@Nonnull CitizenData citizen, @Nonnull PlayerRef playerRef) {
+        if (!isPlayerRefValid(playerRef)) {
+            return;
+        }
+
+        World world = Universe.get().getWorld(citizen.getWorldUUID());
+        if (world == null) {
+            return;
+        }
+
+        Ref<EntityStore> nametagRef = getPrimaryNametagRef(world, citizen);
+        if (nametagRef == null || nametagRef.getStore() == null) {
+            return;
+        }
+
+        NetworkId nametagNetworkId = nametagRef.getStore().getComponent(nametagRef, NetworkId.getComponentType());
+        TransformComponent nametagTransform = nametagRef.getStore().getComponent(nametagRef, TransformComponent.getComponentType());
+        if (nametagNetworkId == null || nametagTransform == null) {
+            return;
+        }
+
+        Vector3d entityPos = nametagTransform.getPosition();
+        Vector3d playerPos = new Vector3d(playerRef.getTransform().getPosition());
+
+        double dx = playerPos.x - entityPos.x;
+        double dz = playerPos.z - entityPos.z;
+        float yaw = (float) (Math.atan2(dx, dz) + Math.PI);
+
+        double dy = playerPos.y - entityPos.y;
+        double horizontalDistance = Math.sqrt(dx * dx + dz * dz);
+        float pitch = (float) Math.atan2(dy, horizontalDistance);
+
+        Direction lookDirection = new Direction(yaw, pitch, 0f);
+        Direction bodyDirection = new Direction(yaw, 0f, 0f);
+
+        UUID playerUuid = playerRef.getUuid();
+        Direction lastLook = citizen.lastNametagLookDirections.get(playerUuid);
+        if (lastLook != null) {
+            float yawDiff = Math.abs(lookDirection.yaw - lastLook.yaw);
+            float pitchDiff = Math.abs(lookDirection.pitch - lastLook.pitch);
+            if (yawDiff < 0.02f && pitchDiff < 0.02f) {
+                return;
+            }
+        }
+
+        citizen.lastNametagLookDirections.put(playerUuid, lookDirection);
+        sendRotationUpdate(nametagNetworkId, playerRef, lookDirection, bodyDirection);
+    }
+
+    private void scheduleNametagLookResetIfNeeded(@Nonnull CitizenData citizen, @Nonnull UUID playerUuid) {
+        if (!citizen.lastNametagLookDirections.containsKey(playerUuid)) {
+            cancelPendingNametagLookReset(citizen, playerUuid);
+            return;
+        }
+
+        ScheduledFuture<?> existingTask = citizen.getPendingNametagLookResetTasks().get(playerUuid);
+        if (existingTask != null && !existingTask.isDone()) {
+            return;
+        }
+
+        final ScheduledFuture<?>[] futureRef = new ScheduledFuture<?>[1];
+        futureRef[0] = HytaleServer.SCHEDULED_EXECUTOR.schedule(() ->
+                        resetModelNametagLookForPlayer(citizen, playerUuid, futureRef[0]),
+                LOOK_RESET_DELAY_MS,
+                TimeUnit.MILLISECONDS);
+
+        citizen.getPendingNametagLookResetTasks().put(playerUuid, futureRef[0]);
+    }
+
+    private void resetModelNametagLookForPlayer(@Nonnull CitizenData citizen, @Nonnull UUID playerUuid, @Nonnull ScheduledFuture<?> expectedTask) {
+        ScheduledFuture<?> activeTask = citizen.getPendingNametagLookResetTasks().get(playerUuid);
+        if (activeTask != expectedTask) {
+            return;
+        }
+
+        UUID worldUuid = citizen.getWorldUUID();
+        World world = Universe.get().getWorld(worldUuid);
+        if (world == null) {
+            clearPendingNametagLookResetState(citizen, playerUuid, expectedTask);
+            return;
+        }
+
+        world.execute(() -> {
+            try {
+                ScheduledFuture<?> worldThreadTask = citizen.getPendingNametagLookResetTasks().get(playerUuid);
+                if (worldThreadTask != expectedTask) {
+                    return;
+                }
+
+                PlayerRef playerRef = Universe.get().getPlayer(playerUuid);
+                if (!isPlayerRefValid(playerRef) || !worldUuid.equals(playerRef.getWorldUuid())) {
+                    clearPendingNametagLookResetState(citizen, playerUuid, expectedTask);
+                    return;
+                }
+
+                if (!citizen.lastNametagLookDirections.containsKey(playerUuid)) {
+                    clearPendingNametagLookResetState(citizen, playerUuid, expectedTask);
+                    return;
+                }
+
+                if (shouldRotateModelNametagTowardsPlayer(citizen, playerRef)) {
+                    clearPendingNametagLookResetState(citizen, playerUuid, expectedTask);
+                    return;
+                }
+
+                Ref<EntityStore> nametagRef = getPrimaryNametagRef(world, citizen);
+                if (nametagRef == null) {
+                    clearPendingNametagLookResetState(citizen, playerUuid, expectedTask);
+                    return;
+                }
+
+                NetworkId nametagNetworkId = nametagRef.getStore().getComponent(nametagRef, NetworkId.getComponentType());
+                TransformComponent nametagTransform = nametagRef.getStore().getComponent(nametagRef, TransformComponent.getComponentType());
+                if (nametagNetworkId == null || nametagTransform == null) {
+                    clearPendingNametagLookResetState(citizen, playerUuid, expectedTask);
+                    return;
+                }
+
+                Vector3f baseRotation = nametagTransform.getRotation();
+                Direction baseLookDirection = toPacketDirection(baseRotation, true);
+                Direction baseBodyDirection = toPacketDirection(baseRotation, false);
+                sendRotationUpdate(nametagNetworkId, playerRef, baseLookDirection, baseBodyDirection);
+
+                citizen.lastNametagLookDirections.remove(playerUuid);
+                clearPendingNametagLookResetState(citizen, playerUuid, expectedTask);
+            } catch (Exception e) {
+                clearPendingNametagLookResetState(citizen, playerUuid, expectedTask);
+                getLogger().atWarning().withCause(e).log("Failed to reset nametag look rotation for citizen " + citizen.getId() + " and player " + playerUuid);
+            }
+        });
+    }
+
+    private void cancelPendingNametagLookReset(@Nonnull CitizenData citizen, @Nonnull UUID playerUuid) {
+        ScheduledFuture<?> existingTask = citizen.getPendingNametagLookResetTasks().remove(playerUuid);
+        if (existingTask != null) {
+            existingTask.cancel(false);
+        }
+    }
+
+    private void clearPendingNametagLookResetState(@Nonnull CitizenData citizen, @Nonnull UUID playerUuid, @Nonnull ScheduledFuture<?> expectedTask) {
+        citizen.getPendingNametagLookResetTasks().remove(playerUuid, expectedTask);
     }
 
     @Nullable

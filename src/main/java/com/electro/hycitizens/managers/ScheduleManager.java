@@ -90,6 +90,10 @@ public class ScheduleManager {
     }
 
     private void tickCitizen(@Nonnull CitizenData citizen) {
+        if (citizen.isAwaitingRespawn() || citizensManager.isCitizenSpawning(citizen.getId())) {
+            return;
+        }
+
         ScheduleConfig scheduleConfig = citizen.getScheduleConfig();
         if (!scheduleConfig.isEnabled() || scheduleConfig.getEntries().isEmpty()) {
             applyBaseBehavior(citizen, "Schedule inactive");
@@ -168,10 +172,10 @@ public class ScheduleManager {
                              @Nonnull ScheduleLocation location, @Nonnull ScheduleSession session) {
         RoleGenerator roleGenerator = citizensManager.getRoleGenerator();
         String travelRoleName = roleGenerator.getScheduleTravelRoleName(citizen, entry);
-        switchCitizenRole(citizen, travelRoleName);
         updateCitizenLeashPoint(citizen, location.getPosition());
         citizensManager.stopCitizenPatrol(citizen.getId());
         citizensManager.moveCitizenToPosition(citizen.getId(), location.getPosition());
+        switchCitizenRole(citizen, travelRoleName, true);
 
         session.activeEntryId = entry.getId();
         session.currentLocationId = location.getId();
@@ -189,7 +193,7 @@ public class ScheduleManager {
                                 @Nonnull ScheduleLocation location, @Nonnull ScheduleSession session) {
         String travelRoleName = citizensManager.getRoleGenerator().getScheduleTravelRoleName(citizen, entry);
         if (!travelRoleName.equals(session.currentRoleName)) {
-            switchCitizenRole(citizen, travelRoleName);
+            switchCitizenRole(citizen, travelRoleName, true);
             session.currentRoleName = travelRoleName;
             citizen.setCurrentScheduleRoleName(travelRoleName);
         }
@@ -206,7 +210,9 @@ public class ScheduleManager {
         }
 
         String entryRoleName = citizensManager.getRoleGenerator().getScheduleEntryRoleName(citizen, entry);
-        switchCitizenRole(citizen, entryRoleName);
+        boolean roleNeedsMoveTarget = entry.getActivityType() == ScheduleActivityType.PATROL
+                || entry.getActivityType() == ScheduleActivityType.FOLLOW_CITIZEN;
+        switchCitizenRole(citizen, entryRoleName, roleNeedsMoveTarget);
 
         if (entry.getActivityType() == ScheduleActivityType.PATROL) {
             citizensManager.stopCitizenPatrol(citizen.getId());
@@ -248,7 +254,9 @@ public class ScheduleManager {
                                      @Nonnull ScheduleLocation location, @Nonnull ScheduleSession session) {
         String desiredRoleName = citizensManager.getRoleGenerator().getScheduleEntryRoleName(citizen, entry);
         if (!desiredRoleName.equals(session.currentRoleName)) {
-            switchCitizenRole(citizen, desiredRoleName);
+            boolean roleNeedsMoveTarget = entry.getActivityType() == ScheduleActivityType.PATROL
+                    || entry.getActivityType() == ScheduleActivityType.FOLLOW_CITIZEN;
+            switchCitizenRole(citizen, desiredRoleName, roleNeedsMoveTarget);
             session.currentRoleName = desiredRoleName;
             citizen.setCurrentScheduleRoleName(desiredRoleName);
         }
@@ -307,7 +315,7 @@ public class ScheduleManager {
             boolean roleChanged = !travelRoleName.equals(session.currentRoleName);
             boolean locationChanged = !location.getId().equals(session.currentLocationId);
             if (roleChanged) {
-                switchCitizenRole(citizen, travelRoleName);
+                switchCitizenRole(citizen, travelRoleName, true);
             }
             updateCitizenLeashPoint(citizen, location.getPosition());
             citizensManager.stopCitizenPatrol(citizen.getId());
@@ -331,7 +339,7 @@ public class ScheduleManager {
         citizensManager.stopCitizenPatrol(citizen.getId());
         String idleRoleName = citizensManager.getRoleGenerator().getScheduleFallbackIdleRoleName(citizen);
         if (!idleRoleName.equals(session.currentRoleName)) {
-            switchCitizenRole(citizen, idleRoleName);
+            switchCitizenRole(citizen, idleRoleName, false);
         }
         updateCitizenLeashPoint(citizen, location.getPosition());
         applyCitizenRotation(citizen, location.getRotation());
@@ -367,7 +375,9 @@ public class ScheduleManager {
 
         citizensManager.stopCitizenMovement(citizen.getId());
         citizensManager.stopCitizenPatrol(citizen.getId());
-        switchCitizenRole(citizen, baseRoleName);
+        boolean roleNeedsMoveTarget = "PATROL".equals(citizen.getMovementBehavior().getType())
+                || "FOLLOW_CITIZEN".equals(citizen.getMovementBehavior().getType());
+        switchCitizenRole(citizen, baseRoleName, roleNeedsMoveTarget);
 
         if (patrolShouldBeRunning) {
             citizensManager.getPatrolManager().startPatrol(citizen.getId(), citizen.getPathConfig().getPluginPatrolPath());
@@ -391,7 +401,7 @@ public class ScheduleManager {
         citizensManager.stopCitizenMovement(citizen.getId());
         citizensManager.stopCitizenPatrol(citizen.getId());
         if (session.state != ScheduleRuntimeState.BLOCKED || !session.currentRoleName.isEmpty() || !session.activeEntryId.isEmpty()) {
-            switchCitizenRole(citizen, citizensManager.getRoleGenerator().getRoleName(citizen));
+            switchCitizenRole(citizen, citizensManager.getRoleGenerator().getRoleName(citizen), false);
         }
         session.activeEntryId = "";
         session.currentLocationId = "";
@@ -616,7 +626,7 @@ public class ScheduleManager {
         });
     }
 
-    private void switchCitizenRole(@Nonnull CitizenData citizen, @Nonnull String roleName) {
+    private void switchCitizenRole(@Nonnull CitizenData citizen, @Nonnull String roleName, boolean ensureMoveTarget) {
         if (roleName.isEmpty()) {
             return;
         }
@@ -641,6 +651,14 @@ public class ScheduleManager {
             NPCEntity npcEntity = npcRef.getStore().getComponent(npcRef, NPCEntity.getComponentType());
             if (npcEntity == null || npcEntity.getRole() == null) {
                 return;
+            }
+            if (ensureMoveTarget && citizensManager.getPatrolManager() != null) {
+                TransformComponent transformComponent =
+                        npcRef.getStore().getComponent(npcRef, TransformComponent.getComponentType());
+                Vector3d markerPosition = transformComponent != null
+                        ? transformComponent.getPosition()
+                        : (citizen.getCurrentPosition() != null ? citizen.getCurrentPosition() : citizen.getPosition());
+                citizensManager.getPatrolManager().ensureMoveTargetNow(citizen, world, markerPosition);
             }
             RoleChangeSystem.requestRoleChange(npcRef, npcEntity.getRole(), roleIndex, true, npcRef.getStore());
             HytaleServer.SCHEDULED_EXECUTOR.schedule(

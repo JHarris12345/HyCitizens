@@ -46,6 +46,7 @@ import com.hypixel.hytale.server.core.universe.world.chunk.WorldChunk;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.server.npc.NPCPlugin;
 import com.hypixel.hytale.server.npc.entities.NPCEntity;
+import com.hypixel.hytale.server.npc.systems.RoleChangeSystem;
 import it.unimi.dsi.fastutil.Pair;
 
 
@@ -70,6 +71,8 @@ public class CitizensManager {
     private static final long WANDER_RECOVERY_COOLDOWN_MS = 20_000L;
     private static final long LOOK_RESET_DELAY_MS = 3_000L;
     private static final double WANDER_PROGRESS_DISTANCE_SQUARED = 0.64;
+    private static final long NPC_SPAWN_RETRY_INTERVAL_MS = 50L;
+    private static final int MAX_PENDING_NPC_SPAWN_RETRIES = 120;
 
     private static final class PendingHologramRemoval {
         private final long chunkIndex;
@@ -128,6 +131,7 @@ public class CitizensManager {
     private final Set<String> pendingNpcRemovalTasks = ConcurrentHashMap.newKeySet();
     private final Map<String, FollowSession> standaloneFollowSessions = new ConcurrentHashMap<>();
     private final Map<String, WanderRecoveryState> wanderRecoveryStates = new ConcurrentHashMap<>();
+    private final Map<String, ScheduledFuture<?>> pendingNpcSpawnRetryTasks = new ConcurrentHashMap<>();
     private PatrolManager patrolManager;
     private ScheduleManager scheduleManager;
     private ScheduledFuture<?> followCitizenTask;
@@ -639,6 +643,13 @@ public class CitizensManager {
         if (scheduleManager != null) {
             scheduleManager.shutdown();
         }
+
+        for (ScheduledFuture<?> pendingRetry : pendingNpcSpawnRetryTasks.values()) {
+            if (pendingRetry != null && !pendingRetry.isCancelled()) {
+                pendingRetry.cancel(false);
+            }
+        }
+        pendingNpcSpawnRetryTasks.clear();
 
         for (CitizenData citizen : citizens.values()) {
             cancelAllPendingLookResets(citizen);
@@ -1774,6 +1785,7 @@ public class CitizensManager {
 
     public void bindCitizenEntityBinding(@Nonnull CitizenData citizen, @Nonnull Ref<EntityStore> ref) {
         citizen.setNpcRef(ref);
+        cancelPendingNpcSpawnRetry(citizen.getId());
 
         UUIDComponent uuidComponent = ref.getStore().getComponent(ref, UUIDComponent.getComponentType());
         if (uuidComponent != null) {
@@ -1786,17 +1798,143 @@ public class CitizensManager {
         citizen.setNpcRef(null);
     }
 
+    private void cancelPendingNpcSpawnRetry(@Nonnull String citizenId) {
+        ScheduledFuture<?> pendingTask = pendingNpcSpawnRetryTasks.remove(citizenId);
+        if (pendingTask != null) {
+            pendingTask.cancel(false);
+        }
+    }
+
+    private void schedulePendingNpcSpawnRetry(@Nonnull CitizenData citizen, boolean save, int attempt) {
+        if (attempt >= MAX_PENDING_NPC_SPAWN_RETRIES) {
+            getLogger().atWarning().log("Timed out waiting for previous NPC entity to clear for citizen '" + citizen.getId() + "'.");
+            return;
+        }
+
+        String citizenId = citizen.getId();
+        ScheduledFuture<?> existingTask = pendingNpcSpawnRetryTasks.get(citizenId);
+        if (existingTask != null && !existingTask.isDone()) {
+            return;
+        }
+
+        final int nextAttempt = attempt + 1;
+        ScheduledFuture<?> retryTask = HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
+            pendingNpcSpawnRetryTasks.remove(citizenId);
+            spawnCitizenNPCInternal(citizen, save, nextAttempt);
+        }, NPC_SPAWN_RETRY_INTERVAL_MS, TimeUnit.MILLISECONDS);
+        pendingNpcSpawnRetryTasks.put(citizenId, retryTask);
+    }
+
     private boolean shouldAutoStartPluginPatrol(@Nonnull CitizenData citizen) {
         String pluginPatrolPath = citizen.getPathConfig().getPluginPatrolPath();
         return "PATROL".equals(citizen.getMovementBehavior().getType()) && !pluginPatrolPath.isEmpty();
     }
 
+    private boolean usesMarkerDrivenRole(@Nonnull CitizenData citizen) {
+        if (citizen.getCurrentScheduleRuntimeState() == ScheduleRuntimeState.TRAVELING) {
+            return true;
+        }
+
+        if (citizen.getCurrentScheduleRuntimeState() == ScheduleRuntimeState.FALLBACK) {
+            return true;
+        }
+
+        if (citizen.getCurrentScheduleRuntimeState() == ScheduleRuntimeState.ACTIVE) {
+            ScheduleConfig scheduleConfig = citizen.getScheduleConfig();
+            if (scheduleConfig != null) {
+                Optional<ScheduleEntry> activeEntry = scheduleConfig.findEntry(citizen.getCurrentScheduleEntryId());
+                if (activeEntry.isPresent()) {
+                    ScheduleActivityType activityType = activeEntry.get().getActivityType();
+                    return activityType == ScheduleActivityType.PATROL
+                            || activityType == ScheduleActivityType.FOLLOW_CITIZEN;
+                }
+            }
+        }
+
+        String movementType = citizen.getMovementBehavior().getType();
+        return "PATROL".equals(movementType)
+                || ("FOLLOW_CITIZEN".equals(movementType) && !citizen.getFollowCitizenId().trim().isEmpty());
+    }
+
+    @Nonnull
+    private String resolveSpawnRoleName(@Nonnull CitizenData citizen) {
+        if (!usesMarkerDrivenRole(citizen)) {
+            return resolveRoleName(citizen);
+        }
+
+        roleGenerator.generateRoleIfChanged(citizen);
+        String safeRoleName = citizen.getScheduleConfig().isEnabled()
+                ? roleGenerator.getScheduleFallbackIdleRoleName(citizen)
+                : roleGenerator.getFallbackRoleName(citizen);
+        int roleIndex = NPCPlugin.get().getIndex(safeRoleName);
+        if (roleIndex != Integer.MIN_VALUE) {
+            return safeRoleName;
+        }
+
+        return resolveRoleName(citizen);
+    }
+
+    private void promoteCitizenToDesiredRoleIfNeeded(@Nonnull CitizenData citizen) {
+        if (!usesMarkerDrivenRole(citizen)) {
+            return;
+        }
+
+        Ref<EntityStore> npcRef = citizen.getNpcRef();
+        if (npcRef == null || !npcRef.isValid()) {
+            return;
+        }
+
+        World world = Universe.get().getWorld(citizen.getWorldUUID());
+        if (world == null) {
+            return;
+        }
+
+        String desiredRoleName = scheduleManager != null
+                ? scheduleManager.getDesiredRoleName(citizen)
+                : roleGenerator.getRoleName(citizen);
+        int desiredRoleIndex = NPCPlugin.get().getIndex(desiredRoleName);
+        if (desiredRoleIndex == Integer.MIN_VALUE) {
+            scheduleRoleRetry(citizen, desiredRoleName);
+            return;
+        }
+
+        world.execute(() -> {
+            Ref<EntityStore> liveRef = citizen.getNpcRef();
+            if (liveRef == null || !liveRef.isValid()) {
+                return;
+            }
+
+            NPCEntity npcEntity = liveRef.getStore().getComponent(liveRef, NPCEntity.getComponentType());
+            if (npcEntity == null || npcEntity.getRole() == null) {
+                return;
+            }
+
+            String currentRoleName = npcEntity.getRole().getRoleName();
+            if (desiredRoleName.equals(currentRoleName)) {
+                return;
+            }
+
+            if (patrolManager != null) {
+                Vector3d markerPosition = citizen.getCurrentPosition() != null ? citizen.getCurrentPosition() : citizen.getPosition();
+                patrolManager.ensureMoveTargetNow(citizen, world, markerPosition);
+            }
+
+            RoleChangeSystem.requestRoleChange(liveRef, npcEntity.getRole(), desiredRoleIndex, true, liveRef.getStore());
+            HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> refreshSpawnedCitizenAppearance(citizen), 50, TimeUnit.MILLISECONDS);
+        });
+    }
+
     public void spawnCitizenNPC(CitizenData citizen, boolean save) {
+        spawnCitizenNPCInternal(citizen, save, 0);
+    }
+
+    private void spawnCitizenNPCInternal(@Nonnull CitizenData citizen, boolean save, int attempt) {
         if (citizen.isAwaitingRespawn()) {
             return;
         }
 
         if (citizen.isHideNpc()) {
+            cancelPendingNpcSpawnRetry(citizen.getId());
             return;
         }
 
@@ -1808,6 +1946,13 @@ public class CitizensManager {
         if (world == null) {
             citizensCurrentlySpawning.remove(citizen.getId());
             getLogger().atWarning().log("Failed to spawn citizen NPC: " + citizen.getName() + ". Failed to find world. Try updating the citizen's position.");
+            return;
+        }
+
+        Ref<EntityStore> existingRef = findExistingCitizenNpcRef(world.getEntityStore().getStore(), citizen);
+        if (existingRef != null && existingRef.isValid()) {
+            citizensCurrentlySpawning.remove(citizen.getId());
+            schedulePendingNpcSpawnRetry(citizen, save, attempt);
             return;
         }
 
@@ -1824,7 +1969,7 @@ public class CitizensManager {
         // Regular model spawning
         float scale = Math.max((float)0.01, citizen.getScale());
 
-        String roleName = resolveRoleName(citizen);
+        String roleName = resolveSpawnRoleName(citizen);
 
         // Pass null for model so the NPC role handles model resolution. This fixes issues with some models like Kweebecs.
         Pair<Ref<EntityStore>, NPCEntity> npc = NPCPlugin.get().spawnEntity(
@@ -1863,6 +2008,10 @@ public class CitizensManager {
         }
 
         bindCitizenEntityBinding(citizen, ref);
+        if (patrolManager != null) {
+            patrolManager.ensureMoveTargetNow(citizen, world, citizen.getPosition());
+        }
+        promoteCitizenToDesiredRoleIfNeeded(citizen);
         if (save) {
             saveCitizen(citizen);
         }
@@ -1919,7 +2068,7 @@ public class CitizensManager {
             return;
         }
 
-        String roleName = resolveRoleName(citizen);
+        String roleName = resolveSpawnRoleName(citizen);
 
         Pair<Ref<EntityStore>, NPCEntity> npc = NPCPlugin.get().spawnEntity(
                 world.getEntityStore().getStore(),
@@ -1952,13 +2101,17 @@ public class CitizensManager {
         if (persistentModel != null) {
             persistentModel.setModelReference(new Model.ModelReference(
                     playerModel.getModelAssetId(),
-                    playerModel.getScale(),
+                    scale,
                     playerModel.getRandomAttachmentIds(),
                     playerModel.getAnimationSetMap() == null
                     ));
         }
 
         bindCitizenEntityBinding(citizen, ref);
+        if (patrolManager != null) {
+            patrolManager.ensureMoveTargetNow(citizen, world, citizen.getPosition());
+        }
+        promoteCitizenToDesiredRoleIfNeeded(citizen);
         if (save) {
             saveCitizen(citizen);
         }
@@ -2361,7 +2514,7 @@ public class CitizensManager {
         if (persistentModel != null) {
             persistentModel.setModelReference(new Model.ModelReference(
                     newModel.getModelAssetId(),
-                    newModel.getScale(),
+                    scale,
                     newModel.getRandomAttachmentIds(),
                     newModel.getAnimationSetMap() == null
             ));
@@ -2467,7 +2620,7 @@ public class CitizensManager {
                         if (persistentModel != null && newModel != null) {
                             persistentModel.setModelReference(new Model.ModelReference(
                                     newModel.getModelAssetId(),
-                                    newModel.getScale(),
+                                    scale,
                                     newModel.getRandomAttachmentIds(),
                                     newModel.getAnimationSetMap() == null
                             ));
@@ -2622,6 +2775,7 @@ public class CitizensManager {
         if (patrolManager != null) {
             patrolManager.onCitizenDespawned(citizen.getId());
         }
+        cancelPendingNpcSpawnRetry(citizen.getId());
         citizensCurrentlySpawning.remove(citizen.getId());
         citizen.setAwaitingRespawn(false);
 
@@ -2664,6 +2818,7 @@ public class CitizensManager {
         if (patrolManager != null) {
             patrolManager.onCitizenDespawned(citizen.getId());
         }
+        cancelPendingNpcSpawnRetry(citizen.getId());
         citizensCurrentlySpawning.remove(citizen.getId());
         citizen.setAwaitingRespawn(false);
 

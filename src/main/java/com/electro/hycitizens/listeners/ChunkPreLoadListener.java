@@ -2,14 +2,20 @@ package com.electro.hycitizens.listeners;
 
 import com.electro.hycitizens.HyCitizensPlugin;
 import com.electro.hycitizens.models.CitizenData;
+import com.hypixel.hytale.component.Holder;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.component.query.Query;
 import com.hypixel.hytale.math.util.ChunkUtil;
 import com.hypixel.hytale.math.vector.Vector3d;
+import com.hypixel.hytale.server.core.asset.type.model.config.Model;
 import com.hypixel.hytale.server.core.HytaleServer;
+import com.hypixel.hytale.server.core.modules.entity.component.PersistentModel;
+import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
+import com.hypixel.hytale.server.core.universe.world.chunk.EntityChunk;
 import com.hypixel.hytale.server.core.universe.world.chunk.WorldChunk;
+import com.hypixel.hytale.server.core.universe.world.storage.ChunkStore;
 import com.hypixel.hytale.server.core.universe.world.events.ChunkPreLoadProcessEvent;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.server.npc.entities.NPCEntity;
@@ -27,6 +33,7 @@ import static com.hypixel.hytale.logger.HytaleLogger.getLogger;
 public class ChunkPreLoadListener {
     private static final long NPC_RESOLVE_TIMEOUT_MS = 15_000L;
     private static final long NPC_RESOLVE_RETRY_MS = 500L;
+    private static final float MIN_MODEL_SCALE = 0.01f;
 
     private final HyCitizensPlugin plugin;
     private final Set<String> citizensBeingProcessed = ConcurrentHashMap.newKeySet();
@@ -41,6 +48,7 @@ public class ChunkPreLoadListener {
         long eventChunkIndex = event.getChunk().getIndex();
         UUID worldUUID = world.getWorldConfig().getUuid();
 
+        sanitizeChunkPersistentModels(event);
         plugin.getCitizensManager().processPendingNpcRemovals(world, eventChunkIndex);
         plugin.getCitizensManager().processPendingHologramRemovals(world, eventChunkIndex);
 
@@ -310,6 +318,10 @@ public class ChunkPreLoadListener {
         }
 
         plugin.getCitizensManager().bindCitizenEntityBinding(citizen, entityRef);
+        World world = Universe.get().getWorld(citizen.getWorldUUID());
+        if (world != null && plugin.getCitizensManager().getPatrolManager() != null) {
+            plugin.getCitizensManager().getPatrolManager().ensureMoveTargetNow(citizen, world, citizen.getCurrentPosition());
+        }
 
         if (!plugin.getCitizensManager().refreshSpawnedCitizenAppearance(citizen) && citizen.isPlayerModel()) {
             plugin.getCitizensManager().updateCitizenSkin(citizen, true);
@@ -426,12 +438,69 @@ public class ChunkPreLoadListener {
         }, 100, 500, TimeUnit.MILLISECONDS);
     }
 
+    private void sanitizeChunkPersistentModels(@Nonnull ChunkPreLoadProcessEvent event) {
+        Holder<ChunkStore> chunkHolder = event.getHolder();
+        if (chunkHolder == null) {
+            return;
+        }
+
+        EntityChunk entityChunk = chunkHolder.getComponent(EntityChunk.getComponentType());
+        if (entityChunk == null) {
+            return;
+        }
+
+        int repairedCount = 0;
+        for (Holder<EntityStore> entityHolder : entityChunk.getEntityHolders()) {
+            if (entityHolder == null) {
+                continue;
+            }
+
+            PersistentModel persistentModel = entityHolder.getComponent(PersistentModel.getComponentType());
+            if (persistentModel == null) {
+                continue;
+            }
+
+            Model.ModelReference modelReference = persistentModel.getModelReference();
+            if (modelReference == null) {
+                entityHolder.tryRemoveComponent(PersistentModel.getComponentType());
+                repairedCount++;
+                continue;
+            }
+
+            float scale = modelReference.getScale();
+            if (Float.isFinite(scale) && scale > 0.0f) {
+                continue;
+            }
+
+            String modelAssetId = modelReference.getModelAssetId();
+            if (modelAssetId == null || modelAssetId.isEmpty()) {
+                entityHolder.tryRemoveComponent(PersistentModel.getComponentType());
+            } else {
+                entityHolder.putComponent(
+                        PersistentModel.getComponentType(),
+                        new PersistentModel(new Model.ModelReference(
+                                modelAssetId,
+                                MIN_MODEL_SCALE,
+                                modelReference.getRandomAttachmentIds(),
+                                modelReference.isStaticModel()
+                        ))
+                );
+            }
+            repairedCount++;
+        }
+
+        if (repairedCount > 0) {
+            entityChunk.markNeedsSaving();
+            getLogger().atWarning().log("Repaired " + repairedCount + " invalid PersistentModel scale values while loading chunk "
+                    + event.getChunk().getX() + ", " + event.getChunk().getZ() + " in world '" + event.getChunk().getWorld().getName() + "'.");
+        }
+    }
+
     Ref<EntityStore> checkIfNpcExists(Store<EntityStore> store, CitizenData citizen) {
         String rolePrefix = "HyCitizens_" + citizen.getId() + "_";
         Query<EntityStore> query = NPCEntity.getComponentType();
         CompletableFuture<Ref<EntityStore>> found = new CompletableFuture<>();
 
-        // Todo: Switch to a custom citizen component so we don't rely on roles
         store.forEachEntityParallel(query, (index, archetypeChunk, cb) -> {
             if (found.isDone()) {
                 return;

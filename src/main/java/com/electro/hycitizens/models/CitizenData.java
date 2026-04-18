@@ -21,6 +21,8 @@ import java.util.concurrent.ScheduledFuture;
 import static com.hypixel.hytale.logger.HytaleLogger.getLogger;
 
 public class CitizenData {
+    private static final float MIN_MODEL_SCALE = 0.01f;
+
     private final String id;
     private String name;
     private String modelId;
@@ -181,7 +183,7 @@ public class CitizenData {
         this.position = position;
         this.rotation = rotation;
         this.currentPosition = position;
-        this.scale = scale;
+        this.scale = sanitizeModelScale(scale);
         this.requiredPermission = requiredPermission;
         this.noPermissionMessage = noPermissionMessage;
         this.commandActions = new ArrayList<>(commandActions);
@@ -277,7 +279,7 @@ public class CitizenData {
     }
 
     public void setScale(float scale) {
-        this.scale = scale;
+        this.scale = sanitizeModelScale(scale);
     }
 
     @Nonnull
@@ -478,7 +480,7 @@ public class CitizenData {
     }
 
     public void setNametagModelScale(float nametagModelScale) {
-        this.nametagModelScale = nametagModelScale;
+        this.nametagModelScale = sanitizeModelScale(nametagModelScale);
     }
 
     public boolean isRotateNametagTowardsPlayer() {
@@ -487,6 +489,13 @@ public class CitizenData {
 
     public void setRotateNametagTowardsPlayer(boolean rotateNametagTowardsPlayer) {
         this.rotateNametagTowardsPlayer = rotateNametagTowardsPlayer;
+    }
+
+    private static float sanitizeModelScale(float scale) {
+        if (!Float.isFinite(scale) || scale <= 0.0f) {
+            return MIN_MODEL_SCALE;
+        }
+        return Math.max(MIN_MODEL_SCALE, scale);
     }
 
     @Nullable

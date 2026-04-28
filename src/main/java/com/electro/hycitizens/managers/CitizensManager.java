@@ -3126,16 +3126,13 @@ public class CitizensManager {
                 pendingImmediateNpcDespawns.add(pendingUuid);
             }
             world.execute(() -> {
-                try {
-                    if (npcRef.isValid()) {
-                        world.getEntityStore().getStore().removeEntity(npcRef, RemoveReason.REMOVE);
-                    }
-                } finally {
-                    if (pendingUuid != null) {
-                        pendingImmediateNpcDespawns.remove(pendingUuid);
-                    }
+                if (npcRef.isValid()) {
+                    world.getEntityStore().getStore().removeEntity(npcRef, RemoveReason.REMOVE);
                 }
             });
+            if (pendingUuid != null) {
+                schedulePendingDespawnUuidCleanup(pendingUuid);
+            }
 
             clearCitizenEntityRef(citizen);
         }
@@ -3146,22 +3143,29 @@ public class CitizensManager {
                 if (world.getEntityRef(npcUUID) != null) {
                     pendingImmediateNpcDespawns.add(npcUUID);
                     world.execute(() -> {
-                        try {
-                            Ref<EntityStore> npc = world.getEntityRef(npcUUID);
-                            if (npc == null || !npc.isValid()) {
-                                return;
-                            }
-
-                            world.getEntityStore().getStore().removeEntity(npc, RemoveReason.REMOVE);
-                        } finally {
-                            pendingImmediateNpcDespawns.remove(npcUUID);
+                        Ref<EntityStore> npc = world.getEntityRef(npcUUID);
+                        if (npc == null || !npc.isValid()) {
+                            return;
                         }
+
+                        world.getEntityStore().getStore().removeEntity(npc, RemoveReason.REMOVE);
                     });
+                    schedulePendingDespawnUuidCleanup(npcUUID);
                 }
 
                 clearCitizenEntityRef(citizen);
             }
         }
+    }
+
+    private void schedulePendingDespawnUuidCleanup(@Nonnull UUID uuid) {
+        // RemoveReason.REMOVE typically defers actual entity removal to end-of-tick. Keep the UUID
+        // in the despawn guard set long enough that any spawn-side findExistingCitizenNpcRef call
+        // racing with the deferred removal still skips the entity, otherwise UI changes such as
+        // scale updates can silently rebind to the despawning entity instead of creating a fresh one.
+        HytaleServer.SCHEDULED_EXECUTOR.schedule(
+                () -> pendingImmediateNpcDespawns.remove(uuid),
+                2, TimeUnit.SECONDS);
     }
 
     private void despawnCitizenNPCForDeletion(@Nonnull CitizenData citizen) {

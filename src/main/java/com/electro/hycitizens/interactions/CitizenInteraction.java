@@ -252,8 +252,26 @@ public class CitizenInteraction {
         handleInteraction(citizen, playerRef, SOURCE_F_KEY);
     }
 
+    public static boolean hasConfiguredInteraction(@Nonnull CitizenData citizen, @Nonnull String interactionSource) {
+        if (hasMatchingCommand(citizen.getCommandActions(), interactionSource)) {
+            return true;
+        }
+
+        if (hasMatchingMessage(citizen.getMessagesConfig(), interactionSource)) {
+            return true;
+        }
+
+        return citizen.isFirstInteractionEnabled()
+                && (hasMatchingCommand(citizen.getFirstInteractionCommandActions(), interactionSource)
+                || hasMatchingMessage(citizen.getFirstInteractionMessagesConfig(), interactionSource));
+    }
+
     static public void handleInteraction(@Nonnull CitizenData citizen, @Nonnull PlayerRef playerRef,
                                          @Nonnull String interactionSource) {
+        if (!hasConfiguredInteraction(citizen, interactionSource)) {
+            return;
+        }
+
         if (HyCitizensPlugin.get().getCitizensManager().isCitizenInCombat(citizen)) {
             playerRef.sendMessage(Message.raw("This citizen is busy in combat.").color(Color.RED));
             return;
@@ -334,6 +352,17 @@ public class CitizenInteraction {
                     citizen.getSequentialCommandIndex()
             );
         }
+    }
+
+    private static boolean hasMatchingCommand(@Nonnull List<CommandAction> commands, @Nonnull String interactionSource) {
+        return commands.stream()
+                .anyMatch(command -> !command.getCommand().isBlank() && command.isTriggeredBy(interactionSource));
+    }
+
+    private static boolean hasMatchingMessage(@Nonnull MessagesConfig messagesConfig, @Nonnull String interactionSource) {
+        return messagesConfig.isEnabled()
+                && messagesConfig.getMessages().stream()
+                .anyMatch(message -> !message.getMessage().isBlank() && message.isTriggeredBy(interactionSource));
     }
 
     private static void runMessageFlow(@Nonnull PlayerRef playerRef, @Nonnull CitizenData citizen,

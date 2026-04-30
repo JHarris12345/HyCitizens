@@ -1152,7 +1152,7 @@ public class CitizensManager {
         citizenData.setRandomIdleHotbarSlot(config.getInt(basePath + ".random-idle-hotbar-slot", -1));
         citizenData.setChanceToEquipFromIdleHotbarSlot(config.getInt(basePath + ".chance-equip-idle-hotbar", 5));
         citizenData.setDefaultOffHandSlot(config.getInt(basePath + ".default-offhand-slot", -1));
-        citizenData.setNighttimeOffhandSlot(config.getInt(basePath + ".nighttime-offhand-slot", 0));
+        citizenData.setNighttimeOffhandSlot(config.getInt(basePath + ".nighttime-offhand-slot", -1));
         citizenData.setKnockbackScale(config.getFloat(basePath + ".knockback-scale", 0.5f));
         citizenData.setHealthRegenEnabled(config.getBoolean(basePath + ".health-regen.enabled", false));
         citizenData.setHealthRegenAmount(config.getFloat(basePath + ".health-regen.amount", 1.0f));

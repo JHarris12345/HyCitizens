@@ -786,7 +786,7 @@ public class SkinCustomizerUI {
                     .color-strip-scroll {
                         layout-mode: TopScrolling;
                         flex-weight: 0;
-                        anchor-height: 118;
+                        anchor-height: 160;
                         padding: 2;
                     }
 

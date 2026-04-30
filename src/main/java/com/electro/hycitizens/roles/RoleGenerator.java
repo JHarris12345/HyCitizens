@@ -440,7 +440,7 @@ public class RoleGenerator {
         modify.addProperty("RandomIdleHotbarSlot", citizen.getRandomIdleHotbarSlot());
         modify.addProperty("ChanceToEquipFromIdleHotbarSlot", citizen.getChanceToEquipFromIdleHotbarSlot());
         modify.addProperty("DefaultOffHandSlot", citizen.getDefaultOffHandSlot());
-        modify.addProperty("NighttimeOffhandSlot", citizen.getNighttimeOffhandSlot());
+        modify.addProperty("NighttimeOffhandSlot", getGeneratedNighttimeOffhandSlot(citizen));
 
         addStringArrayIfNotEmpty(modify, "CombatMessageTargetGroups", citizen.getCombatMessageTargetGroups());
         addStringArrayIfNotEmpty(modify, "FlockArray", citizen.getFlockArray());
@@ -600,6 +600,20 @@ public class RoleGenerator {
         if (!values.isEmpty()) {
             addStringArray(obj, key, values);
         }
+    }
+
+    private int getGeneratedNighttimeOffhandSlot(@Nonnull CitizenData citizen) {
+        int slot = citizen.getNighttimeOffhandSlot();
+        if (slot != 0 || citizen.getDefaultOffHandSlot() >= 0) {
+            return slot;
+        }
+
+        List<String> offHandItems = citizen.getOffHandItems();
+        if (offHandItems.size() == 1 && "Furniture_Crude_Torch".equals(offHandItems.get(0))) {
+            return -1;
+        }
+
+        return slot;
     }
 
     // Helper: add a string array to a JsonObject

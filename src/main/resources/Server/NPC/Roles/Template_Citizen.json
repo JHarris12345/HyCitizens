@@ -125,7 +125,7 @@
       "Description": "Default off-hand item slot. -1 for nothing."
     },
     "NighttimeOffhandSlot": {
-      "Value": 0,
+      "Value": -1,
       "Description": "OffHand slot to set during night. -1 for nothing."
     },
     "LeashDistance": {

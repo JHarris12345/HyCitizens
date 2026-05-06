@@ -301,6 +301,10 @@ public class RoleGenerator {
         modify.addProperty("ChaseRelativeSpeed", Math.min(3.0f, runSpeed / MARKER_ROLE_MAX_SPEED));
         modify.addProperty("CombatMovingRelativeSpeed", Math.min(3.0f, (runSpeed * COMBAT_MOVE_SPEED_RATIO) / MARKER_ROLE_MAX_SPEED));
         modify.addProperty("CombatBackwardsRelativeSpeed", Math.min(3.0f, (runSpeed * COMBAT_BACKWARDS_SPEED_RATIO) / MARKER_ROLE_MAX_SPEED));
+        // Patrolling citizens shouldn't try to avoid other citizens (it pulls them off the path).
+        // Overrides the ApplySeparation value set by generateVariantRole. Comment out to restore
+        // patrol-time avoidance based on the per-citizen Apply Separation setting.
+        modify.addProperty("ApplySeparation", false);
         return role;
     }
 

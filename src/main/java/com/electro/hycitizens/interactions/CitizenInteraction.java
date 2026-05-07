@@ -265,8 +265,16 @@ public class CitizenInteraction {
                 || hasMatchingMessage(citizen.getFirstInteractionMessagesConfig(), interactionSource));
     }
 
-    static public void handleInteraction(@Nonnull CitizenData citizen, @Nonnull PlayerRef playerRef,
-                                         @Nonnull String interactionSource) {
+    static public void handleInteraction(@Nonnull CitizenData citizen, @Nonnull PlayerRef playerRef, @Nonnull String interactionSource) {
+        playerRef.sendMessage(Message.raw("INTERACTEDDD"));
+
+        // Interact event must be called before configured and combat check.
+        CitizenInteractEvent interactEvent = new CitizenInteractEvent(citizen, playerRef);
+        HyCitizensPlugin.get().getCitizensManager().fireCitizenInteractEvent(interactEvent);
+
+        if (interactEvent.isCancelled())
+            return;
+
         if (!hasConfiguredInteraction(citizen, interactionSource)) {
             return;
         }
@@ -275,12 +283,6 @@ public class CitizenInteraction {
             playerRef.sendMessage(Message.raw("This citizen is busy in combat.").color(Color.RED));
             return;
         }
-
-        CitizenInteractEvent interactEvent = new CitizenInteractEvent(citizen, playerRef);
-        HyCitizensPlugin.get().getCitizensManager().fireCitizenInteractEvent(interactEvent);
-
-        if (interactEvent.isCancelled())
-            return;
 
         Ref<EntityStore> ref = playerRef.getReference();
 

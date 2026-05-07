@@ -68,9 +68,7 @@ public class ChunkPreLoadListener {
     }
 
     @Nonnull
-    private Set<CitizenData> collectChunkCitizens(@Nonnull ChunkPreLoadProcessEvent event,
-                                                  @Nonnull UUID worldUUID,
-                                                  long eventChunkIndex) {
+    private Set<CitizenData> collectChunkCitizens(@Nonnull ChunkPreLoadProcessEvent event, @Nonnull UUID worldUUID, long eventChunkIndex) {
         Set<CitizenData> candidates = new LinkedHashSet<>();
         List<CitizenData> worldCitizens = new ArrayList<>();
         Map<UUID, CitizenData> citizensByNpcUuid = new HashMap<>();

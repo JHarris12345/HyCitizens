@@ -297,6 +297,7 @@ public class RoleGenerator {
         modify.addProperty("MoveTargetStopDistance", Math.max(0.05f, stopDistance));
         modify.addProperty("MoveTargetSlowDownDistance", Math.max(stopDistance + 0.25f, slowDownDistance));
         modify.addProperty("MoveTargetRelativeSpeed", Math.max(0.05f, Math.min(3.0f, walkSpeed / MARKER_ROLE_MAX_SPEED)));
+        modify.addProperty("ApplySeparation", false); // Used to prevent collision issues
         float runSpeed = Math.max(0.1f, citizen.getMovementBehavior().getRunSpeed());
         modify.addProperty("ChaseRelativeSpeed", Math.min(3.0f, runSpeed / MARKER_ROLE_MAX_SPEED));
         modify.addProperty("CombatMovingRelativeSpeed", Math.min(3.0f, (runSpeed * COMBAT_MOVE_SPEED_RATIO) / MARKER_ROLE_MAX_SPEED));

@@ -266,8 +266,6 @@ public class CitizenInteraction {
     }
 
     static public void handleInteraction(@Nonnull CitizenData citizen, @Nonnull PlayerRef playerRef, @Nonnull String interactionSource) {
-        playerRef.sendMessage(Message.raw("INTERACTEDDD"));
-
         // Interact event must be called before configured and combat check.
         CitizenInteractEvent interactEvent = new CitizenInteractEvent(citizen, playerRef);
         HyCitizensPlugin.get().getCitizensManager().fireCitizenInteractEvent(interactEvent);

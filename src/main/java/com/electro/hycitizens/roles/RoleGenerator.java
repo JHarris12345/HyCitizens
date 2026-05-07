@@ -248,7 +248,8 @@ public class RoleGenerator {
         role.add("Parameters", parameters);
 
         // KnockbackScale
-        role.addProperty("KnockbackScale", citizen.getKnockbackScale());
+        //role.addProperty("KnockbackScale", citizen.getKnockbackScale());
+        role.addProperty("KnockbackScale", 0);
 
         role.addProperty("NameTranslationKey", citizen.getNameTranslationKey());
 

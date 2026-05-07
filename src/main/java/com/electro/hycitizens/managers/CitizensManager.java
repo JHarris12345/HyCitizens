@@ -858,6 +858,8 @@ public class CitizensManager {
         citizenData.setMapMarkerEnabled(config.getBoolean(basePath + ".map-marker.enabled", false));
         citizenData.setMapMarkerType(config.getString(basePath + ".map-marker.type", CitizenData.MAP_MARKER_TYPE_PIN));
         citizenData.setMapMarkerName(config.getString(basePath + ".map-marker.name", ""));
+        citizenData.setMapMarkerCustomIcon(config.getString(basePath + ".map-marker.custom-icon", ""));
+        citizenData.setMapMarkerMaxDistance(config.getFloat(basePath + ".map-marker.max-distance", 0.0f));
 
         // Load animation behaviors
         List<AnimationBehavior> animBehaviors = new ArrayList<>();
@@ -1339,6 +1341,8 @@ public class CitizensManager {
             config.set(basePath + ".map-marker.enabled", citizen.isMapMarkerEnabled());
             config.set(basePath + ".map-marker.type", citizen.getMapMarkerType());
             config.set(basePath + ".map-marker.name", citizen.getMapMarkerName());
+            config.set(basePath + ".map-marker.custom-icon", citizen.getMapMarkerCustomIcon());
+            config.set(basePath + ".map-marker.max-distance", citizen.getMapMarkerMaxDistance());
 
             // Misc
             config.set(basePath + ".hide-nametag", citizen.isHideNametag());

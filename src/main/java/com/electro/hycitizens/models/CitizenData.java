@@ -39,6 +39,7 @@ public class CitizenData {
     public static final String MAP_MARKER_TYPE_HEART = "HEART";
     public static final String MAP_MARKER_TYPE_HOME = "HOME";
     public static final String MAP_MARKER_TYPE_NPC_TYPE = "NPC_TYPE";
+    public static final String MAP_MARKER_TYPE_CUSTOM = "CUSTOM";
 
     private final String id;
     private String name;
@@ -72,6 +73,8 @@ public class CitizenData {
     private boolean mapMarkerEnabled = false;
     private String mapMarkerType = MAP_MARKER_TYPE_PIN;
     private String mapMarkerName = "";
+    private String mapMarkerCustomIcon = "";
+    private float mapMarkerMaxDistance = 0.0f;
 
     // Item-related fields
     private String npcHelmet;
@@ -598,6 +601,48 @@ public class CitizenData {
         return mapMarkerName != null ? mapMarkerName : "";
     }
 
+    public void setMapMarkerCustomIcon(@Nullable String customIcon) {
+        this.mapMarkerCustomIcon = normalizeMapMarkerCustomIcon(customIcon);
+    }
+
+    @Nonnull
+    public String getMapMarkerCustomIcon() {
+        return mapMarkerCustomIcon != null ? mapMarkerCustomIcon : "";
+    }
+
+    public void setMapMarkerMaxDistance(float maxDistance) {
+        if (!Float.isFinite(maxDistance) || maxDistance < 0.0f) {
+            this.mapMarkerMaxDistance = 0.0f;
+            return;
+        }
+        this.mapMarkerMaxDistance = maxDistance;
+    }
+
+    public float getMapMarkerMaxDistance() {
+        if (!Float.isFinite(mapMarkerMaxDistance) || mapMarkerMaxDistance < 0.0f) {
+            return 0.0f;
+        }
+        return mapMarkerMaxDistance;
+    }
+
+    @Nonnull
+    public static String normalizeMapMarkerCustomIcon(@Nullable String customIcon) {
+        if (customIcon == null || customIcon.isBlank()) {
+            return "";
+        }
+
+        String normalized = customIcon.trim().replace('\\', '/');
+        int slash = normalized.lastIndexOf('/');
+        if (slash >= 0) {
+            normalized = normalized.substring(slash + 1);
+        }
+
+        if (!normalized.toLowerCase(java.util.Locale.ROOT).endsWith(".png")) {
+            return "";
+        }
+        return normalized.replaceAll("[\\r\\n]+", "").trim();
+    }
+
     @Nonnull
     public static String normalizeMapMarkerType(@Nullable String type) {
         if (type == null || type.isBlank()) {
@@ -623,7 +668,8 @@ public class CitizenData {
                 || normalized.equals(MAP_MARKER_TYPE_SHIELD)
                 || normalized.equals(MAP_MARKER_TYPE_HEART)
                 || normalized.equals(MAP_MARKER_TYPE_HOME)
-                || normalized.equals(MAP_MARKER_TYPE_NPC_TYPE)) {
+                || normalized.equals(MAP_MARKER_TYPE_NPC_TYPE)
+                || normalized.equals(MAP_MARKER_TYPE_CUSTOM)) {
             return normalized;
         }
         return MAP_MARKER_TYPE_PIN;

@@ -22,11 +22,13 @@ import static com.hypixel.hytale.logger.HytaleLogger.getLogger;
 public class RoleAssetPackManager {
     public static void setup() {
         Path rolesPath = Paths.get("mods", "HyCitizensRoles", "Server", "NPC", "Roles");
+        Path mapMarkersPath = Paths.get("mods", "HyCitizensRoles", "Common", "UI", "WorldMap", "MapMarkers");
         Path manifestPath = Paths.get("mods", "HyCitizensRoles", "manifest.json");
         Path configPath = Paths.get("config.json");
 
         try {
             Files.createDirectories(rolesPath);
+            Files.createDirectories(mapMarkersPath);
 
             // Check config.json and ensure the mod is registered if DefaultModsEnabled is false
             if (Files.exists(configPath)) {

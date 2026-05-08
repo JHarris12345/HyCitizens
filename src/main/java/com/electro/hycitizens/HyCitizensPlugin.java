@@ -13,7 +13,7 @@ import com.electro.hycitizens.models.CitizenData;
 import com.electro.hycitizens.ui.CitizensUI;
 import com.electro.hycitizens.ui.SkinCustomizerUI;
 import com.electro.hycitizens.util.ConfigManager;
-import com.electro.hycitizens.util.RoleAssetPackManager;
+import com.electro.hycitizens.util.DataAssetPackManager;
 import com.electro.hycitizens.util.UpdateChecker;
 import com.hypixel.hytale.component.ComponentType;
 import com.hypixel.hytale.event.EventPriority;
@@ -25,7 +25,6 @@ import com.hypixel.hytale.server.core.modules.interaction.interaction.config.Int
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.JavaPluginInit;
 import com.hypixel.hytale.server.core.universe.Universe;
-import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.events.ChunkPreLoadProcessEvent;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.server.core.universe.world.World;
@@ -66,9 +65,13 @@ public class HyCitizensPlugin extends JavaPlugin {
         // Initialize config manager
         this.configManager = new ConfigManager(Paths.get("mods", "HyCitizensData"));
 
-        this.generatedRolesPath = Paths.get("mods", "HyCitizensRoles", "Server", "NPC", "Roles");
+        this.generatedRolesPath = DataAssetPackManager.GENERATED_ROLES_PATH;
 
-        RoleAssetPackManager.setup();
+        if (DataAssetPackManager.setup()) {
+            return;
+        }
+
+        CitizenMapMarkerAsset.ensureBuiltInMarkerFiles();
         // TEMPORARY WORKAROUND: some persisted NPCs reload with generic roles, so we persist the owning
         // citizen id directly on the NPC entity to make rebind and nametag recovery deterministic.
         this.citizenNpcIdentityComponent = this.getEntityStoreRegistry().registerComponent(
@@ -83,6 +86,7 @@ public class HyCitizensPlugin extends JavaPlugin {
         );
 
         this.citizensManager = new CitizensManager(this);
+        CitizenMapMarkerAsset.ensureMarkerFilesForCitizens(citizensManager.getAllCitizens());
         this.citizenMapMarkerProvider = new CitizenMapMarkerProvider(this);
         this.citizensUI = new CitizensUI(this);
         this.skinCustomizerUI = new SkinCustomizerUI(this);
@@ -106,6 +110,10 @@ public class HyCitizensPlugin extends JavaPlugin {
 
     @Override
     protected void start() {
+        if (citizensManager == null) {
+            return;
+        }
+
         UpdateChecker.checkAsync();
 
         // Regenerate all roles
@@ -124,7 +132,9 @@ public class HyCitizensPlugin extends JavaPlugin {
             itemInteractionHandler.unregister();
         }
 
-        CitizenMapMarkerAsset.clearAllViewers();
+        if (chunkPreLoadListener != null) {
+            chunkPreLoadListener.shutdown();
+        }
 
         if (citizensManager != null) {
             citizensManager.shutdown();
@@ -134,20 +144,8 @@ public class HyCitizensPlugin extends JavaPlugin {
     private void registerEventListeners() {
         getEventRegistry().register(PlayerDisconnectEvent.class, connectionListener::onPlayerDisconnect);
         getEventRegistry().register(PlayerConnectEvent.class, connectionListener::onPlayerConnect);
-        getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, event -> {
-            registerCitizenMapMarkerProvider(event.getWorld());
-            if (event.getHolder() != null) {
-                PlayerRef playerRef = event.getHolder().getComponent(PlayerRef.getComponentType());
-                if (playerRef != null) {
-                    CitizenMapMarkerAsset.clearViewer(playerRef.getUuid());
-                }
-            }
-        });
-        getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, event -> {
-            if (event.getPlayerRef() != null) {
-                CitizenMapMarkerAsset.clearViewer(event.getPlayerRef().getUuid());
-            }
-        });
+        getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, event ->
+                registerCitizenMapMarkerProvider(event.getWorld()));
 
         this.getEntityStoreRegistry().registerSystem(new EntityDamageListener(this));
         this.getEntityStoreRegistry().registerSystem(new EntityDeathListener(this));

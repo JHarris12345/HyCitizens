@@ -42,8 +42,11 @@ public final class CitizenMapMarkerProvider implements WorldMapManager.MarkerPro
             return;
         }
 
-        List<String> markerImagesToDeliver = new ArrayList<>();
         List<PendingMarker> pendingMarkers = new ArrayList<>();
+        PlayerRef viewerRef = findViewerRef(world.getPlayerRefs(), viewer.getUuid());
+        Vector3d viewerPosition = viewerRef != null && viewerRef.getTransform() != null
+                ? new Vector3d(viewerRef.getTransform().getPosition())
+                : null;
 
         for (CitizenData citizen : plugin.getCitizensManager().getAllCitizens()) {
             if (!citizen.isMapMarkerEnabled() || !worldUuid.equals(citizen.getWorldUUID())) {
@@ -56,15 +59,12 @@ public final class CitizenMapMarkerProvider implements WorldMapManager.MarkerPro
             if (position == null) {
                 continue;
             }
+            if (!isWithinCustomMarkerDistance(citizen, position, viewerPosition)) {
+                continue;
+            }
 
             String markerImage = CitizenMapMarkerAsset.resolveMarkerImage(citizen);
-            markerImagesToDeliver.add(markerImage);
             pendingMarkers.add(new PendingMarker(citizen, position, markerImage));
-        }
-
-        PlayerRef viewerRef = findViewerRef(world.getPlayerRefs(), viewer.getUuid());
-        if (viewerRef != null && !markerImagesToDeliver.isEmpty()) {
-            CitizenMapMarkerAsset.deliverAssetsToViewer(viewerRef, markerImagesToDeliver);
         }
 
         for (PendingMarker pendingMarker : pendingMarkers) {
@@ -129,5 +129,16 @@ public final class CitizenMapMarkerProvider implements WorldMapManager.MarkerPro
             }
         }
         return null;
+    }
+
+    private static boolean isWithinCustomMarkerDistance(@Nonnull CitizenData citizen, @Nonnull Vector3d markerPosition, @Nullable Vector3d viewerPosition) {
+        float maxDistance = citizen.getMapMarkerMaxDistance();
+        if (maxDistance <= 0.0f || viewerPosition == null) {
+            return true;
+        }
+
+        double dx = markerPosition.x - viewerPosition.x;
+        double dz = markerPosition.z - viewerPosition.z;
+        return dx * dx + dz * dz <= (double) maxDistance * maxDistance;
     }
 }

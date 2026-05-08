@@ -75,6 +75,7 @@ public class CitizensManager {
     private static final double WANDER_PROGRESS_DISTANCE_SQUARED = 0.64;
     private static final long NPC_SPAWN_RETRY_INTERVAL_MS = 50L;
     private static final int MAX_PENDING_NPC_SPAWN_RETRIES = 120;
+    private static final long DEFERRED_CITIZEN_SAVE_DELAY_MS = 1_000L;
 
     private static final class PendingHologramRemoval {
         private final long chunkIndex;
@@ -138,6 +139,8 @@ public class CitizensManager {
     private final Map<String, ScheduledFuture<?>> pendingNpcSpawnRetryTasks = new ConcurrentHashMap<>();
     private final Map<String, ScheduledFuture<?>> pendingRespawnTasks = new ConcurrentHashMap<>();
     private final Map<String, ScheduledFuture<?>> pendingTemporaryNametagRecoveryTasks = new ConcurrentHashMap<>();
+    private final Set<String> pendingDeferredCitizenSaves = ConcurrentHashMap.newKeySet();
+    private ScheduledFuture<?> pendingDeferredCitizenSaveTask;
     private PatrolManager patrolManager;
     private ScheduleManager scheduleManager;
     private ThreadedScheduler followCitizenTask = new ThreadedScheduler();
@@ -434,7 +437,7 @@ public class CitizensManager {
                             continue;
                         }
 
-                        restoreResolvedCitizenState(citizen, resolvedRef, true);
+                        restoreResolvedCitizenStateDeferredSave(citizen, resolvedRef);
                     }
                 });
             }
@@ -449,6 +452,10 @@ public class CitizensManager {
     }
 
     private void scheduleTemporaryNametagRecovery(@Nonnull CitizenData citizen, boolean save) {
+        scheduleTemporaryNametagRecovery(citizen, save, false);
+    }
+
+    private void scheduleTemporaryNametagRecovery(@Nonnull CitizenData citizen, boolean save, boolean deferSave) {
         if (!shouldUseSeparateNametagEntities(citizen)) {
             cancelPendingTemporaryNametagRecovery(citizen.getId());
             return;
@@ -474,7 +481,7 @@ public class CitizensManager {
                 }
 
                 if (!shouldUseSeparateNametagEntities(citizen)) {
-                    updateSpawnedCitizenHologram(citizen, save);
+                    updateSpawnedCitizenHologram(citizen, save, deferSave);
                     return;
                 }
 
@@ -485,7 +492,7 @@ public class CitizensManager {
                 }
 
                 despawnCitizenHologram(citizen);
-                spawnCitizenHologram(citizen, save);
+                spawnCitizenHologram(citizen, save, deferSave);
             });
         }, 800, TimeUnit.MILLISECONDS);
         pendingTemporaryNametagRecoveryTasks.put(citizenId, recoveryTask);
@@ -699,6 +706,11 @@ public class CitizensManager {
             }
         }
         pendingTemporaryNametagRecoveryTasks.clear();
+        if (pendingDeferredCitizenSaveTask != null && !pendingDeferredCitizenSaveTask.isCancelled()) {
+            pendingDeferredCitizenSaveTask.cancel(false);
+        }
+        pendingDeferredCitizenSaveTask = null;
+        pendingDeferredCitizenSaves.clear();
 
         for (CitizenData citizen : citizens.values()) {
             cancelAllPendingLookResets(citizen);
@@ -858,6 +870,8 @@ public class CitizensManager {
         citizenData.setMapMarkerEnabled(config.getBoolean(basePath + ".map-marker.enabled", false));
         citizenData.setMapMarkerType(config.getString(basePath + ".map-marker.type", CitizenData.MAP_MARKER_TYPE_PIN));
         citizenData.setMapMarkerName(config.getString(basePath + ".map-marker.name", ""));
+        citizenData.setMapMarkerCustomIcon(config.getString(basePath + ".map-marker.custom-icon", ""));
+        citizenData.setMapMarkerMaxDistance(config.getFloat(basePath + ".map-marker.max-distance", 0.0f));
 
         // Load animation behaviors
         List<AnimationBehavior> animBehaviors = new ArrayList<>();
@@ -1283,6 +1297,50 @@ public class CitizensManager {
         saveCitizen(citizen, false); // False since in some cases, this could cause issues if set to true
     }
 
+    public synchronized void saveCitizenDeferred(@Nonnull CitizenData citizen) {
+        pendingDeferredCitizenSaves.add(citizen.getId());
+
+        if (pendingDeferredCitizenSaveTask != null && !pendingDeferredCitizenSaveTask.isDone()) {
+            return;
+        }
+
+        pendingDeferredCitizenSaveTask = HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
+            synchronized (CitizensManager.this) {
+                pendingDeferredCitizenSaveTask = null;
+            }
+            flushDeferredCitizenSaves();
+        }, DEFERRED_CITIZEN_SAVE_DELAY_MS, TimeUnit.MILLISECONDS);
+    }
+
+    private void flushDeferredCitizenSaves() {
+        List<String> citizenIds = new ArrayList<>(pendingDeferredCitizenSaves);
+        if (citizenIds.isEmpty()) {
+            return;
+        }
+
+        pendingDeferredCitizenSaves.removeAll(citizenIds);
+
+        config.beginBatch();
+        try {
+            for (String citizenId : citizenIds) {
+                CitizenData citizen = citizens.get(citizenId);
+                if (citizen != null) {
+                    saveCitizen(citizen, false);
+                }
+            }
+        } finally {
+            config.endBatch();
+        }
+    }
+
+    private void persistCitizen(@Nonnull CitizenData citizen, boolean deferSave) {
+        if (deferSave) {
+            saveCitizenDeferred(citizen);
+        } else {
+            saveCitizen(citizen);
+        }
+    }
+
     public void saveCitizen(@Nonnull CitizenData citizen, boolean respawnIfRoleChanged) {
         config.beginBatch();
 
@@ -1339,6 +1397,8 @@ public class CitizensManager {
             config.set(basePath + ".map-marker.enabled", citizen.isMapMarkerEnabled());
             config.set(basePath + ".map-marker.type", citizen.getMapMarkerType());
             config.set(basePath + ".map-marker.name", citizen.getMapMarkerName());
+            config.set(basePath + ".map-marker.custom-icon", citizen.getMapMarkerCustomIcon());
+            config.set(basePath + ".map-marker.max-distance", citizen.getMapMarkerMaxDistance());
 
             // Misc
             config.set(basePath + ".hide-nametag", citizen.isHideNametag());
@@ -1848,6 +1908,18 @@ public class CitizensManager {
     public void restoreResolvedCitizenState(@Nonnull CitizenData citizen,
                                             @Nonnull Ref<EntityStore> resolvedRef,
                                             boolean save) {
+        restoreResolvedCitizenState(citizen, resolvedRef, save, false);
+    }
+
+    public void restoreResolvedCitizenStateDeferredSave(@Nonnull CitizenData citizen,
+                                                       @Nonnull Ref<EntityStore> resolvedRef) {
+        restoreResolvedCitizenState(citizen, resolvedRef, false, true);
+    }
+
+    private void restoreResolvedCitizenState(@Nonnull CitizenData citizen,
+                                             @Nonnull Ref<EntityStore> resolvedRef,
+                                             boolean save,
+                                             boolean deferSave) {
         bindCitizenEntityRef(citizen, resolvedRef);
         ensureSafeModelComponent(resolvedRef);
 
@@ -1873,10 +1945,10 @@ public class CitizensManager {
         applyNpcNameplateComponent(resolvedRef.getStore(), resolvedRef, citizen);
         if (shouldUseSeparateNametagEntities(citizen)) {
             despawnCitizenHologram(citizen);
-            scheduleTemporaryNametagRecovery(citizen, save);
+            scheduleTemporaryNametagRecovery(citizen, save || deferSave, deferSave);
         } else {
             cancelPendingTemporaryNametagRecovery(citizen.getId());
-            updateSpawnedCitizenHologram(citizen, save);
+            updateSpawnedCitizenHologram(citizen, save || deferSave, deferSave);
         }
         updateCitizenNPCItems(citizen);
         triggerAnimations(citizen, "DEFAULT");
@@ -1887,6 +1959,10 @@ public class CitizensManager {
 
         if (patrolManager != null && shouldAutoStartPluginPatrol(citizen) && !patrolManager.isPatrolling(citizen.getId())) {
             patrolManager.startPatrol(citizen.getId(), citizen.getPathConfig().getPluginPatrolPath());
+        }
+
+        if (deferSave) {
+            saveCitizenDeferred(citizen);
         }
     }
 
@@ -3045,11 +3121,15 @@ public class CitizensManager {
     }
 
     public void spawnCitizenHologram(CitizenData citizen, boolean save) {
+        spawnCitizenHologram(citizen, save, false);
+    }
+
+    private void spawnCitizenHologram(CitizenData citizen, boolean save, boolean deferSave) {
         if (citizen.isHideNametag()) {
             refreshNpcNameplate(citizen);
             despawnCitizenHologram(citizen);
             if (save) {
-                saveCitizen(citizen);
+                persistCitizen(citizen, deferSave);
             }
             return;
         }
@@ -3058,7 +3138,7 @@ public class CitizensManager {
             despawnCitizenHologram(citizen);
             refreshNpcNameplate(citizen);
             if (save) {
-                saveCitizen(citizen);
+                persistCitizen(citizen, deferSave);
             }
             return;
         }
@@ -3069,7 +3149,7 @@ public class CitizensManager {
             refreshNpcNameplate(citizen);
             despawnCitizenHologram(citizen);
             if (save) {
-                saveCitizen(citizen);
+                persistCitizen(citizen, deferSave);
             }
             return;
         }
@@ -3158,7 +3238,7 @@ public class CitizensManager {
                     }
 
                     if (save) {
-                        saveCitizen(citizen);
+                        persistCitizen(citizen, deferSave);
                     }
 
                     hologramsCurrentlySpawning.remove(citizen.getId());
@@ -3479,11 +3559,15 @@ public class CitizensManager {
     }
 
     public void updateSpawnedCitizenHologram(CitizenData citizen, boolean save) {
+        updateSpawnedCitizenHologram(citizen, save, false);
+    }
+
+    private void updateSpawnedCitizenHologram(CitizenData citizen, boolean save, boolean deferSave) {
         if (citizen.isHideNametag()) {
             refreshNpcNameplate(citizen);
             despawnCitizenHologram(citizen);
             if (save) {
-                saveCitizen(citizen);
+                persistCitizen(citizen, deferSave);
             }
             return;
         }
@@ -3492,7 +3576,7 @@ public class CitizensManager {
             despawnCitizenHologram(citizen);
             refreshNpcNameplate(citizen);
             if (save) {
-                saveCitizen(citizen);
+                persistCitizen(citizen, deferSave);
             }
             return;
         }
@@ -3504,7 +3588,7 @@ public class CitizensManager {
         if (world == null) {
             getLogger().atWarning().log("Failed to update citizen hologram: " + citizen.getName() + ". Failed to find world.");
             if (save) {
-                saveCitizen(citizen);
+                persistCitizen(citizen, deferSave);
             }
             return;
         }
@@ -3514,7 +3598,7 @@ public class CitizensManager {
         if (desiredEntityCount <= 0) {
             despawnCitizenHologram(citizen);
             if (save) {
-                saveCitizen(citizen);
+                persistCitizen(citizen, deferSave);
             }
             return;
         }
@@ -3531,7 +3615,7 @@ public class CitizensManager {
             if (chunk == null) {
                 // Chunk not loaded, just save it
                 if (save) {
-                    saveCitizen(citizen);
+                    persistCitizen(citizen, deferSave);
                 }
                 return;
             }
@@ -3539,7 +3623,7 @@ public class CitizensManager {
             if (!rebindCitizenHologramEntities(world, citizen)
                     && !hasAllSpawnedCitizenHologramEntities(world, citizen)) {
                 despawnCitizenHologram(citizen);
-                spawnCitizenHologram(citizen, save);
+                spawnCitizenHologram(citizen, save, deferSave);
                 return;
             }
 
@@ -3553,7 +3637,7 @@ public class CitizensManager {
                     boolean shouldUseModelHost = shouldUseModelNametag(citizen);
                     if (entityIsModelHost != shouldUseModelHost) {
                         despawnCitizenHologram(citizen);
-                        spawnCitizenHologram(citizen, save);
+                        spawnCitizenHologram(citizen, save, deferSave);
                         return;
                     }
                 }
@@ -3596,7 +3680,7 @@ public class CitizensManager {
                     Holder<EntityStore> holder = createNametagEntityHolder(world, citizen, i, linePos, hologramRot, lineText);
                     if (holder == null) {
                         despawnCitizenHologram(citizen);
-                        spawnCitizenHologram(citizen, save);
+                        spawnCitizenHologram(citizen, save, deferSave);
                         return;
                     }
 
@@ -3609,7 +3693,7 @@ public class CitizensManager {
 
                 if (holdersToAdd.size() != newCount - existingCount || newUuids.size() != newCount - existingCount) {
                     despawnCitizenHologram(citizen);
-                    spawnCitizenHologram(citizen, save);
+                    spawnCitizenHologram(citizen, save, deferSave);
                     return;
                 }
 
@@ -3620,7 +3704,7 @@ public class CitizensManager {
             }
 
             if (save) {
-                saveCitizen(citizen);
+                persistCitizen(citizen, deferSave);
             }
         });
     }

@@ -35,16 +35,21 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static com.hypixel.hytale.logger.HytaleLogger.getLogger;
 
 public class ChunkPreLoadListener {
     private static final long NPC_RESOLVE_TIMEOUT_MS = 15_000L;
     private static final long NPC_RESOLVE_RETRY_MS = 500L;
+    private static final long CHUNK_PROCESS_TIMEOUT_MS = 15_000L;
+    private static final long CHUNK_PROCESS_RETRY_MS = 250L;
     private static final float MIN_MODEL_SCALE = 0.01f;
 
     private final HyCitizensPlugin plugin;
     private final Set<String> citizensPendingNpcResolution = ConcurrentHashMap.newKeySet();
+    private final Map<String, PendingChunkProcess> pendingChunkProcesses = new ConcurrentHashMap<>();
 
     public ChunkPreLoadListener(@Nonnull HyCitizensPlugin plugin) {
         this.plugin = plugin;
@@ -59,12 +64,7 @@ public class ChunkPreLoadListener {
         plugin.getCitizensManager().processPendingNpcRemovals(world, eventChunkIndex);
         plugin.getCitizensManager().processPendingHologramRemovals(world, eventChunkIndex);
 
-        for (CitizenData citizen : collectChunkCitizens(event, worldUUID, eventChunkIndex)) {
-            // Hand off the heavy work to run outside the event
-            HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
-                processCitizenAsync(world, citizen, eventChunkIndex);
-            }, 0, TimeUnit.MILLISECONDS);
-        }
+        enqueueChunkCitizens(world, worldUUID, eventChunkIndex, collectChunkCitizens(event, worldUUID, eventChunkIndex));
     }
 
     @Nonnull
@@ -184,117 +184,179 @@ public class ChunkPreLoadListener {
         return null;
     }
 
-    private void processCitizenAsync(World world, CitizenData citizen, long chunkIndex) {
-        if (citizen.isAwaitingRespawn()) {
+    private void enqueueChunkCitizens(@Nonnull World world, @Nonnull UUID worldUUID, long chunkIndex, @Nonnull Set<CitizenData> citizens) {
+        if (citizens.isEmpty()) {
             return;
         }
 
-        // First check if the chunk is already loaded
-        WorldChunk loadedChunk = world.getChunkIfLoaded(chunkIndex);
-        if (loadedChunk != null) {
-            world.execute(() -> {
-                if (citizen.isAwaitingRespawn()) {
-                    return;
+        String processKey = getChunkProcessKey(worldUUID, chunkIndex);
+        boolean[] created = { false };
+
+        PendingChunkProcess process = pendingChunkProcesses.compute(processKey, (key, existingProcess) -> {
+            PendingChunkProcess processToUse = existingProcess;
+            if (processToUse == null || processToUse.isCompleted()) {
+                processToUse = new PendingChunkProcess(world, chunkIndex);
+                created[0] = true;
+            }
+
+            for (CitizenData citizen : citizens) {
+                if (!citizen.isAwaitingRespawn()) {
+                    processToUse.addCitizen(citizen);
                 }
+            }
 
-                Ref<EntityStore> entityRef = checkIfNpcExists(world.getEntityStore().getStore(), citizen);
+            return processToUse;
+        });
 
-                if (entityRef == null || !entityRef.isValid()) {
-                    resolveOrSpawnCitizenNPC(world, citizen, true);
-                } else {
-                    onCitizenEntityResolved(citizen, entityRef);
-                }
-            });
+        if (created[0]) {
+            process.setFuture(HytaleServer.SCHEDULED_EXECUTOR.scheduleAtFixedRate(
+                    () -> tickPendingChunkProcess(processKey, process),
+                    0,
+                    CHUNK_PROCESS_RETRY_MS,
+                    TimeUnit.MILLISECONDS
+            ));
+        }
+    }
 
+    private void tickPendingChunkProcess(@Nonnull String processKey, @Nonnull PendingChunkProcess process) {
+        if (process.isCompleted() || !process.markQueued()) {
             return;
         }
 
-        // Chunk is not loaded. Try to wait for it to load, if it takes too long, assume it won't load and load it
-        long start = System.currentTimeMillis();
-        final ScheduledFuture<?>[] futureRef = new ScheduledFuture<?>[1];
-        boolean[] spawned = { false };
-        boolean[] queued = { false };
-        futureRef[0] = HytaleServer.SCHEDULED_EXECUTOR.scheduleAtFixedRate(() -> {
-            if (citizen.isAwaitingRespawn()) {
-                futureRef[0].cancel(false);
+        World world = process.getWorld();
+        long chunkIndex = process.getChunkIndex();
+        boolean loaded = world.getChunkIfLoaded(chunkIndex) != null;
+        long elapsedMs = System.currentTimeMillis() - process.getStartedAt();
+
+        if (!loaded && elapsedMs < CHUNK_PROCESS_TIMEOUT_MS) {
+            process.clearQueued();
+            return;
+        }
+
+        if (!loaded) {
+            WorldChunk chunkInMemory = world.getChunkIfInMemory(chunkIndex);
+            if (chunkInMemory == null) {
+                List<CitizenData> skippedCitizens = finishPendingChunkProcess(processKey, process);
+                if (!skippedCitizens.isEmpty()) {
+                    getLogger().atWarning().log("Skipped chunk preload recovery for " + skippedCitizens.size()
+                            + " HyCitizens NPC(s) in chunk " + chunkIndex + " of world '" + world.getName()
+                            + "' because the chunk was not loaded or in memory after " + CHUNK_PROCESS_TIMEOUT_MS + "ms.");
+                }
                 return;
             }
 
-            if (spawned[0]) {
-                futureRef[0].cancel(false);
+            world.loadChunkIfInMemory(chunkIndex);
+        }
+
+        boolean chunkWasLoaded = loaded;
+        world.execute(() -> {
+            if (chunkWasLoaded && world.getChunkIfLoaded(chunkIndex) == null) {
+                process.clearQueued();
                 return;
             }
 
-            // Timeout
-            long elapsedMs = System.currentTimeMillis() - start;
-            WorldChunk loadedChunk2 = world.getChunkIfLoaded(chunkIndex);
+            processChunkCitizens(world, finishPendingChunkProcess(processKey, process));
+        });
+    }
 
-            if (elapsedMs >= 15_000 || loadedChunk2 != null) {
-                futureRef[0].cancel(false);
-
-                // Check if the citizen spawned, if it didn't then it's likely it's in an unloaded chunk. Load the chunk and try again
-                // Todo: This isn't very performant if there's a lot of citizens in unloaded chunks
-                if (!spawned[0]) {
-                    WorldChunk chunkInMemory = world.getChunkIfInMemory(chunkIndex);
-                    if (chunkInMemory == null) {
-                        // Chunk is not in memory, there's nothing we can do to check if citizen is loaded or not
-                        return;
-                    }
-
-                    world.loadChunkIfInMemory(chunkIndex); // Todo: we should not be loading the chunk
-
-                    world.execute(() -> {
-                        if (citizen.isAwaitingRespawn()) {
-                            return;
-                        }
-
-                        Ref<EntityStore> entityRef = checkIfNpcExists(world.getEntityStore().getStore(), citizen);
-
-                        // If the chunk loads, try to spawn the citizen if it doesn't exist
-                        if (entityRef == null || !entityRef .isValid()) {
-                            resolveOrSpawnCitizenNPC(world, citizen, true);
-                        } else {
-                            onCitizenEntityResolved(citizen, entityRef);
-                        }
-                    });
-
-                }
-
-                return;
+    private void processChunkCitizens(@Nonnull World world, @Nonnull List<CitizenData> citizens) {
+        for (CitizenData citizen : citizens) {
+            if (citizen.isAwaitingRespawn() || plugin.getCitizensManager().isCitizenSpawning(citizen.getId())) {
+                continue;
             }
 
-            if (queued[0]) {
-                return;
+            Ref<EntityStore> entityRef = checkIfNpcExists(world.getEntityStore().getStore(), citizen);
+            if (entityRef == null || !entityRef.isValid()) {
+                resolveOrSpawnCitizenNPC(world, citizen, true);
+            } else {
+                onCitizenEntityResolved(citizen, entityRef);
             }
-            queued[0] = true;
+        }
+    }
 
-            world.execute(() -> {
-                if (citizen.isAwaitingRespawn()) {
-                    return;
-                }
+    @Nonnull
+    private List<CitizenData> finishPendingChunkProcess(@Nonnull String processKey, @Nonnull PendingChunkProcess process) {
+        AtomicReference<List<CitizenData>> snapshotRef = new AtomicReference<>(new ArrayList<>());
+        pendingChunkProcesses.computeIfPresent(processKey, (key, currentProcess) -> {
+            if (currentProcess != process) {
+                return currentProcess;
+            }
 
-                WorldChunk chunk = world.getChunkIfLoaded(chunkIndex);
+            process.complete();
+            snapshotRef.set(process.snapshotCitizens());
+            return null;
+        });
 
-                if (chunk == null) {
-                    queued[0] = false;
-                    return;
-                }
+        return snapshotRef.get();
+    }
 
-                spawned[0] = true;
-                futureRef[0].cancel(false);
+    @Nonnull
+    private String getChunkProcessKey(@Nonnull UUID worldUUID, long chunkIndex) {
+        return worldUUID + ":" + chunkIndex;
+    }
 
-                Ref<EntityStore> entityRef = checkIfNpcExists(world.getEntityStore().getStore(), citizen);
+    private static final class PendingChunkProcess {
+        private final World world;
+        private final long chunkIndex;
+        private final long startedAt = System.currentTimeMillis();
+        private final Map<String, CitizenData> citizensById = new ConcurrentHashMap<>();
+        private final AtomicBoolean queued = new AtomicBoolean(false);
+        private final AtomicBoolean completed = new AtomicBoolean(false);
+        private volatile ScheduledFuture<?> future;
 
-                // If the chunk is loaded, try to spawn the citizen if it doesn't exist
-                if (entityRef == null || !entityRef.isValid()) {
-                    resolveOrSpawnCitizenNPC(world, citizen, true);
-                } else {
-                    onCitizenEntityResolved(citizen, entityRef);
-                }
+        private PendingChunkProcess(@Nonnull World world, long chunkIndex) {
+            this.world = world;
+            this.chunkIndex = chunkIndex;
+        }
 
-            });
+        private void addCitizen(@Nonnull CitizenData citizen) {
+            citizensById.put(citizen.getId(), citizen);
+        }
 
-        }, 0, 250, TimeUnit.MILLISECONDS);
+        @Nonnull
+        private List<CitizenData> snapshotCitizens() {
+            return new ArrayList<>(citizensById.values());
+        }
+
+        @Nonnull
+        private World getWorld() {
+            return world;
+        }
+
+        private long getChunkIndex() {
+            return chunkIndex;
+        }
+
+        private long getStartedAt() {
+            return startedAt;
+        }
+
+        private boolean markQueued() {
+            return queued.compareAndSet(false, true);
+        }
+
+        private void clearQueued() {
+            queued.set(false);
+        }
+
+        private boolean isCompleted() {
+            return completed.get();
+        }
+
+        private void setFuture(@Nonnull ScheduledFuture<?> future) {
+            this.future = future;
+            if (isCompleted()) {
+                future.cancel(false);
+            }
+        }
+
+        private void complete() {
+            completed.set(true);
+            ScheduledFuture<?> scheduledFuture = future;
+            if (scheduledFuture != null) {
+                scheduledFuture.cancel(false);
+            }
+        }
     }
 
     private void resolveOrSpawnCitizenNPC(@Nonnull World world, @Nonnull CitizenData citizen, boolean save) {

@@ -3,6 +3,7 @@ package com.electro.hycitizens.listeners;
 import com.electro.hycitizens.HyCitizensPlugin;
 import com.electro.hycitizens.components.CitizenNpcIdentityComponent;
 import com.electro.hycitizens.models.CitizenData;
+import com.electro.hycitizens.util.ThreadedScheduler;
 import com.hypixel.hytale.component.Holder;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
@@ -36,6 +37,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static com.hypixel.hytale.logger.HytaleLogger.getLogger;
@@ -44,15 +46,38 @@ public class ChunkPreLoadListener {
     private static final long NPC_RESOLVE_TIMEOUT_MS = 15_000L;
     private static final long NPC_RESOLVE_RETRY_MS = 500L;
     private static final long CHUNK_PROCESS_TIMEOUT_MS = 15_000L;
-    private static final long CHUNK_PROCESS_RETRY_MS = 250L;
+    private static final long CHUNK_PROCESS_INITIAL_DELAY_MS = 500L;
+    private static final long CHUNK_PROCESS_EARLY_WINDOW_MS = 1_500L;
+    private static final long CHUNK_PROCESS_MID_WINDOW_MS = 5_000L;
+    private static final long CHUNK_PROCESS_EARLY_RETRY_MS = 500L;
+    private static final long CHUNK_PROCESS_MID_RETRY_MS = 1_500L;
+    private static final long CHUNK_PROCESS_LATE_RETRY_MS = 5_000L;
+    private static final long CHUNK_PROCESS_PUMP_INTERVAL_MS = 100L;
+    private static final long SKIPPED_RECOVERY_LOG_DELAY_MS = 1_000L;
     private static final float MIN_MODEL_SCALE = 0.01f;
 
     private final HyCitizensPlugin plugin;
+    private final ThreadedScheduler chunkProcessScheduler = new ThreadedScheduler();
     private final Set<String> citizensPendingNpcResolution = ConcurrentHashMap.newKeySet();
     private final Map<String, PendingChunkProcess> pendingChunkProcesses = new ConcurrentHashMap<>();
+    private final Map<String, SkippedChunkRecoverySummary> skippedRecoverySummaries = new ConcurrentHashMap<>();
+    private volatile long skippedRecoverySummaryDueAt = 0L;
 
     public ChunkPreLoadListener(@Nonnull HyCitizensPlugin plugin) {
         this.plugin = plugin;
+        this.chunkProcessScheduler.scheduleAtFixedRate(
+                "hycitizens-chunk-preload",
+                this::tickPendingChunkProcesses,
+                CHUNK_PROCESS_PUMP_INTERVAL_MS,
+                TimeUnit.MILLISECONDS
+        );
+    }
+
+    public void shutdown() {
+        chunkProcessScheduler.stop();
+        pendingChunkProcesses.values().forEach(PendingChunkProcess::complete);
+        pendingChunkProcesses.clear();
+        skippedRecoverySummaries.clear();
     }
 
     public void onChunkPreload(ChunkPreLoadProcessEvent event) {
@@ -190,13 +215,10 @@ public class ChunkPreLoadListener {
         }
 
         String processKey = getChunkProcessKey(worldUUID, chunkIndex);
-        boolean[] created = { false };
-
-        PendingChunkProcess process = pendingChunkProcesses.compute(processKey, (key, existingProcess) -> {
+        pendingChunkProcesses.compute(processKey, (key, existingProcess) -> {
             PendingChunkProcess processToUse = existingProcess;
             if (processToUse == null || processToUse.isCompleted()) {
-                processToUse = new PendingChunkProcess(world, chunkIndex);
-                created[0] = true;
+                processToUse = new PendingChunkProcess(world, chunkIndex, CHUNK_PROCESS_INITIAL_DELAY_MS);
             }
 
             for (CitizenData citizen : citizens) {
@@ -207,14 +229,19 @@ public class ChunkPreLoadListener {
 
             return processToUse;
         });
+    }
 
-        if (created[0]) {
-            process.setFuture(HytaleServer.SCHEDULED_EXECUTOR.scheduleAtFixedRate(
-                    () -> tickPendingChunkProcess(processKey, process),
-                    0,
-                    CHUNK_PROCESS_RETRY_MS,
-                    TimeUnit.MILLISECONDS
-            ));
+    private void tickPendingChunkProcesses() {
+        long now = System.currentTimeMillis();
+        flushSkippedChunkRecoverySummariesIfDue(now);
+
+        for (Map.Entry<String, PendingChunkProcess> entry : pendingChunkProcesses.entrySet()) {
+            PendingChunkProcess process = entry.getValue();
+            if (process.isCompleted() || process.getNextCheckAt() > now) {
+                continue;
+            }
+
+            tickPendingChunkProcess(entry.getKey(), process);
         }
     }
 
@@ -229,7 +256,7 @@ public class ChunkPreLoadListener {
         long elapsedMs = System.currentTimeMillis() - process.getStartedAt();
 
         if (!loaded && elapsedMs < CHUNK_PROCESS_TIMEOUT_MS) {
-            process.clearQueued();
+            process.deferNextCheck(getNextChunkProcessDelayMs(elapsedMs));
             return;
         }
 
@@ -238,9 +265,7 @@ public class ChunkPreLoadListener {
             if (chunkInMemory == null) {
                 List<CitizenData> skippedCitizens = finishPendingChunkProcess(processKey, process);
                 if (!skippedCitizens.isEmpty()) {
-                    getLogger().atWarning().log("Skipped chunk preload recovery for " + skippedCitizens.size()
-                            + " HyCitizens NPC(s) in chunk " + chunkIndex + " of world '" + world.getName()
-                            + "' because the chunk was not loaded or in memory after " + CHUNK_PROCESS_TIMEOUT_MS + "ms.");
+                    recordSkippedChunkRecovery(world, skippedCitizens.size());
                 }
                 return;
             }
@@ -248,15 +273,63 @@ public class ChunkPreLoadListener {
             world.loadChunkIfInMemory(chunkIndex);
         }
 
-        boolean chunkWasLoaded = loaded;
-        world.execute(() -> {
-            if (chunkWasLoaded && world.getChunkIfLoaded(chunkIndex) == null) {
-                process.clearQueued();
-                return;
+        world.execute(() -> processChunkCitizens(world, finishPendingChunkProcess(processKey, process)));
+    }
+
+    private long getNextChunkProcessDelayMs(long elapsedMs) {
+        long nextDelayMs;
+        if (elapsedMs < CHUNK_PROCESS_EARLY_WINDOW_MS) {
+            nextDelayMs = CHUNK_PROCESS_EARLY_RETRY_MS;
+        } else if (elapsedMs < CHUNK_PROCESS_MID_WINDOW_MS) {
+            nextDelayMs = CHUNK_PROCESS_MID_RETRY_MS;
+        } else {
+            nextDelayMs = CHUNK_PROCESS_LATE_RETRY_MS;
+        }
+
+        return Math.min(nextDelayMs, Math.max(0L, CHUNK_PROCESS_TIMEOUT_MS - elapsedMs));
+    }
+
+    private void recordSkippedChunkRecovery(@Nonnull World world, int citizenCount) {
+        skippedRecoverySummaries
+                .computeIfAbsent(world.getName(), key -> new SkippedChunkRecoverySummary())
+                .record(citizenCount);
+
+        if (skippedRecoverySummaryDueAt <= 0L) {
+            skippedRecoverySummaryDueAt = System.currentTimeMillis() + SKIPPED_RECOVERY_LOG_DELAY_MS;
+        }
+    }
+
+    private void flushSkippedChunkRecoverySummariesIfDue(long now) {
+        if (skippedRecoverySummaryDueAt <= 0L || now < skippedRecoverySummaryDueAt) {
+            return;
+        }
+
+        for (Map.Entry<String, SkippedChunkRecoverySummary> entry : skippedRecoverySummaries.entrySet()) {
+            SkippedChunkRecoverySummary summary = entry.getValue();
+            int chunkCount = summary.drainChunkCount();
+            int citizenCount = summary.drainCitizenCount();
+            if (chunkCount <= 0 || citizenCount <= 0) {
+                continue;
             }
 
-            processChunkCitizens(world, finishPendingChunkProcess(processKey, process));
-        });
+            getLogger().atWarning().log("Skipped chunk preload recovery for " + citizenCount
+                    + " HyCitizens NPC(s) across " + chunkCount + " chunk(s) in world '" + entry.getKey()
+                    + "' because the chunks were not loaded or in memory after " + CHUNK_PROCESS_TIMEOUT_MS + "ms.");
+        }
+
+        skippedRecoverySummaryDueAt = hasPendingSkippedChunkRecoverySummaries()
+                ? System.currentTimeMillis() + SKIPPED_RECOVERY_LOG_DELAY_MS
+                : 0L;
+    }
+
+    private boolean hasPendingSkippedChunkRecoverySummaries() {
+        for (SkippedChunkRecoverySummary summary : skippedRecoverySummaries.values()) {
+            if (summary.hasPending()) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void processChunkCitizens(@Nonnull World world, @Nonnull List<CitizenData> citizens) {
@@ -302,11 +375,12 @@ public class ChunkPreLoadListener {
         private final Map<String, CitizenData> citizensById = new ConcurrentHashMap<>();
         private final AtomicBoolean queued = new AtomicBoolean(false);
         private final AtomicBoolean completed = new AtomicBoolean(false);
-        private volatile ScheduledFuture<?> future;
+        private volatile long nextCheckAt;
 
-        private PendingChunkProcess(@Nonnull World world, long chunkIndex) {
+        private PendingChunkProcess(@Nonnull World world, long chunkIndex, long initialDelayMs) {
             this.world = world;
             this.chunkIndex = chunkIndex;
+            this.nextCheckAt = System.currentTimeMillis() + Math.max(0L, initialDelayMs);
         }
 
         private void addCitizen(@Nonnull CitizenData citizen) {
@@ -331,11 +405,16 @@ public class ChunkPreLoadListener {
             return startedAt;
         }
 
+        private long getNextCheckAt() {
+            return nextCheckAt;
+        }
+
         private boolean markQueued() {
             return queued.compareAndSet(false, true);
         }
 
-        private void clearQueued() {
+        private void deferNextCheck(long delayMs) {
+            nextCheckAt = System.currentTimeMillis() + Math.max(0L, delayMs);
             queued.set(false);
         }
 
@@ -343,19 +422,30 @@ public class ChunkPreLoadListener {
             return completed.get();
         }
 
-        private void setFuture(@Nonnull ScheduledFuture<?> future) {
-            this.future = future;
-            if (isCompleted()) {
-                future.cancel(false);
-            }
-        }
-
         private void complete() {
             completed.set(true);
-            ScheduledFuture<?> scheduledFuture = future;
-            if (scheduledFuture != null) {
-                scheduledFuture.cancel(false);
-            }
+        }
+    }
+
+    private static final class SkippedChunkRecoverySummary {
+        private final AtomicInteger chunkCount = new AtomicInteger();
+        private final AtomicInteger citizenCount = new AtomicInteger();
+
+        private void record(int skippedCitizenCount) {
+            chunkCount.incrementAndGet();
+            citizenCount.addAndGet(skippedCitizenCount);
+        }
+
+        private int drainChunkCount() {
+            return chunkCount.getAndSet(0);
+        }
+
+        private int drainCitizenCount() {
+            return citizenCount.getAndSet(0);
+        }
+
+        private boolean hasPending() {
+            return chunkCount.get() > 0 || citizenCount.get() > 0;
         }
     }
 
@@ -432,7 +522,7 @@ public class ChunkPreLoadListener {
             return;
         }
 
-        plugin.getCitizensManager().restoreResolvedCitizenState(citizen, entityRef, true);
+        plugin.getCitizensManager().restoreResolvedCitizenStateDeferredSave(citizen, entityRef);
 
         String pluginPatrolPath = citizen.getPathConfig().getPluginPatrolPath();
         if (!pluginPatrolPath.isEmpty()

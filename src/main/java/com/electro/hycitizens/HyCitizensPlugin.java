@@ -132,6 +132,10 @@ public class HyCitizensPlugin extends JavaPlugin {
             itemInteractionHandler.unregister();
         }
 
+        if (chunkPreLoadListener != null) {
+            chunkPreLoadListener.shutdown();
+        }
+
         if (citizensManager != null) {
             citizensManager.shutdown();
         }

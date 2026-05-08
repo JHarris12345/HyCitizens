@@ -53,7 +53,7 @@ public class RoleAssetPackManager {
                         "  \"OptionalDependencies\": {},\n" +
                         "  \"LoadBefore\": {},\n" +
                         "  \"DisabledByDefault\": false,\n" +
-                        "  \"IncludesAssetPack\": false,\n" +
+                        "  \"IncludesAssetPack\": true,\n" +
                         "  \"SubPlugins\": []\n" +
                         "}";
 
@@ -82,8 +82,21 @@ public class RoleAssetPackManager {
                             "\"ServerVersion\":\\s*\"[^\"]*\"",
                             "\"ServerVersion\": \"2026.03.26-89796e57b\""
                     );
-                    Files.write(manifestPath, content.getBytes(StandardCharsets.UTF_8));
                 }
+                if (!content.contains("\"IncludesAssetPack\": true")) {
+                    if (content.matches("(?s).*\"IncludesAssetPack\"\\s*:\\s*(true|false).*")) {
+                        content = content.replaceAll(
+                                "\"IncludesAssetPack\":\\s*(true|false)",
+                                "\"IncludesAssetPack\": true"
+                        );
+                    } else {
+                        content = content.replace(
+                                "\"SubPlugins\":",
+                                "\"IncludesAssetPack\": true,\n  \"SubPlugins\":"
+                        );
+                    }
+                }
+                Files.write(manifestPath, content.getBytes(StandardCharsets.UTF_8));
             }
         } catch (IOException e) {
             getLogger().atSevere().log("Could not create role asset pack manager. " + e.getMessage());

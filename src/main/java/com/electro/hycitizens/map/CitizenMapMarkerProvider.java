@@ -42,7 +42,6 @@ public final class CitizenMapMarkerProvider implements WorldMapManager.MarkerPro
             return;
         }
 
-        List<String> markerImagesToDeliver = new ArrayList<>();
         List<PendingMarker> pendingMarkers = new ArrayList<>();
         PlayerRef viewerRef = findViewerRef(world.getPlayerRefs(), viewer.getUuid());
         Vector3d viewerPosition = viewerRef != null && viewerRef.getTransform() != null
@@ -65,12 +64,7 @@ public final class CitizenMapMarkerProvider implements WorldMapManager.MarkerPro
             }
 
             String markerImage = CitizenMapMarkerAsset.resolveMarkerImage(citizen);
-            markerImagesToDeliver.add(markerImage);
             pendingMarkers.add(new PendingMarker(citizen, position, markerImage));
-        }
-
-        if (viewerRef != null && !markerImagesToDeliver.isEmpty()) {
-            CitizenMapMarkerAsset.deliverAssetsToViewer(viewerRef, markerImagesToDeliver);
         }
 
         for (PendingMarker pendingMarker : pendingMarkers) {

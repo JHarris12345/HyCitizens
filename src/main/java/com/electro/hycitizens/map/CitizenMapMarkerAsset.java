@@ -1,17 +1,6 @@
 package com.electro.hycitizens.map;
 
 import com.electro.hycitizens.models.CitizenData;
-import com.hypixel.hytale.common.util.ArrayUtil;
-import com.hypixel.hytale.protocol.Packet;
-import com.hypixel.hytale.protocol.ToClientPacket;
-import com.hypixel.hytale.protocol.packets.setup.AssetFinalize;
-import com.hypixel.hytale.protocol.packets.setup.AssetInitialize;
-import com.hypixel.hytale.protocol.packets.setup.AssetPart;
-import com.hypixel.hytale.protocol.packets.setup.RequestCommonAssetsRebuild;
-import com.hypixel.hytale.server.core.HytaleServer;
-import com.hypixel.hytale.server.core.asset.common.CommonAsset;
-import com.hypixel.hytale.server.core.io.PacketHandler;
-import com.hypixel.hytale.server.core.universe.PlayerRef;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -35,35 +24,21 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 public final class CitizenMapMarkerAsset {
     public static final String DEFAULT_MARKER_IMAGE = "hycitizens-pin.png";
     public static final Path CUSTOM_MARKERS_PATH = Paths.get("mods", "HyCitizensRoles", "Common", "UI", "WorldMap", "MapMarkers");
-    private static final String ASSET_PREFIX = "UI/WorldMap/MapMarkers/";
-    private static final int ASSET_PACKET_SIZE = 2_621_440;
     private static final int ICON_SIZE = 32;
     private static final int NPC_CONTENT_SCALE_PERCENT = 96;
-    private static final long REBUILD_DEBOUNCE_MS = 40L;
-    private static final long ASSET_REFRESH_INTERVAL_MS = TimeUnit.MINUTES.toMillis(2);
-    private static final Map<String, MarkerAsset> GENERATED_ASSETS = new ConcurrentHashMap<>();
-    private static final Map<String, Long> CUSTOM_ASSET_MODIFIED_AT = new ConcurrentHashMap<>();
-    private static final Map<UUID, Map<String, Long>> DELIVERED_AT_BY_VIEWER = new ConcurrentHashMap<>();
-    private static final Map<UUID, ScheduledFuture<?>> PENDING_REBUILDS = new ConcurrentHashMap<>();
+    private static final Set<String> ENSURED_GENERATED_IMAGES = ConcurrentHashMap.newKeySet();
 
     private CitizenMapMarkerAsset() {
     }
@@ -95,6 +70,7 @@ public final class CitizenMapMarkerAsset {
             paths.filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
                     .map(path -> path.getFileName().toString())
                     .filter(name -> name.toLowerCase(Locale.ROOT).endsWith(".png"))
+                    .filter(name -> !name.toLowerCase(Locale.ROOT).startsWith("hycitizens-"))
                     .sorted(String.CASE_INSENSITIVE_ORDER)
                     .forEach(icons::add);
         } catch (IOException ignored) {
@@ -102,73 +78,30 @@ public final class CitizenMapMarkerAsset {
         return List.copyOf(icons);
     }
 
-    public static void deliverAssetsToViewer(@Nonnull PlayerRef viewer, @Nonnull Collection<String> imageNames) {
-        if (imageNames.isEmpty()) {
-            return;
-        }
-
-        UUID viewerUuid = viewer.getUuid();
-        PacketHandler packetHandler = viewer.getPacketHandler();
-        if (viewerUuid == null || packetHandler == null) {
-            return;
-        }
-
-        long now = System.currentTimeMillis();
-        Map<String, Long> deliveredAtByAsset = DELIVERED_AT_BY_VIEWER.computeIfAbsent(
-                viewerUuid,
-                ignored -> new ConcurrentHashMap<>()
-        );
-        LinkedHashMap<String, MarkerAsset> pendingAssets = new LinkedHashMap<>();
-        for (String imageName : imageNames) {
-            String assetPath = toAssetPath(imageName);
-            if (assetPath == null) {
-                continue;
-            }
-
-            Long deliveredAt = deliveredAtByAsset.get(assetPath);
-            if (deliveredAt != null && now >= deliveredAt && now - deliveredAt < ASSET_REFRESH_INTERVAL_MS) {
-                continue;
-            }
-
-            MarkerAsset asset = GENERATED_ASSETS.get(assetPath);
-            if (asset != null) {
-                pendingAssets.putIfAbsent(assetPath, asset);
-            }
-        }
-
-        if (pendingAssets.isEmpty()) {
-            return;
-        }
-
-        for (MarkerAsset asset : pendingAssets.values()) {
-            MarkerAsset.sendToPlayer(packetHandler, asset);
-        }
-        for (String assetPath : pendingAssets.keySet()) {
-            deliveredAtByAsset.put(assetPath, now);
-        }
-        scheduleRebuild(viewerUuid, packetHandler);
+    public static void ensureBuiltInMarkerFiles() {
+        ensureBuiltInIcon(CitizenData.MAP_MARKER_TYPE_PIN);
+        ensureBuiltInIcon(CitizenData.MAP_MARKER_TYPE_DOT);
+        ensureBuiltInIcon(CitizenData.MAP_MARKER_TYPE_STAR);
+        ensureBuiltInIcon(CitizenData.MAP_MARKER_TYPE_DIAMOND);
+        ensureBuiltInIcon(CitizenData.MAP_MARKER_TYPE_SQUARE);
+        ensureBuiltInIcon(CitizenData.MAP_MARKER_TYPE_QUESTION);
+        ensureBuiltInIcon(CitizenData.MAP_MARKER_TYPE_EXCLAMATION);
+        ensureBuiltInIcon(CitizenData.MAP_MARKER_TYPE_MONEY_SYMBOL);
+        ensureBuiltInIcon(CitizenData.MAP_MARKER_TYPE_SHOP);
+        ensureBuiltInIcon(CitizenData.MAP_MARKER_TYPE_TRADER);
+        ensureBuiltInIcon(CitizenData.MAP_MARKER_TYPE_CHEST);
+        ensureBuiltInIcon(CitizenData.MAP_MARKER_TYPE_SWORD);
+        ensureBuiltInIcon(CitizenData.MAP_MARKER_TYPE_SHIELD);
+        ensureBuiltInIcon(CitizenData.MAP_MARKER_TYPE_HEART);
+        ensureBuiltInIcon(CitizenData.MAP_MARKER_TYPE_HOME);
     }
 
-    public static void clearViewer(@Nullable UUID viewerUuid) {
-        if (viewerUuid == null) {
-            return;
-        }
-
-        DELIVERED_AT_BY_VIEWER.remove(viewerUuid);
-        ScheduledFuture<?> future = PENDING_REBUILDS.remove(viewerUuid);
-        if (future != null && !future.isCancelled()) {
-            future.cancel(false);
-        }
-    }
-
-    public static void clearAllViewers() {
-        DELIVERED_AT_BY_VIEWER.clear();
-        for (ScheduledFuture<?> future : PENDING_REBUILDS.values()) {
-            if (future != null && !future.isCancelled()) {
-                future.cancel(false);
+    public static void ensureMarkerFilesForCitizens(@Nonnull Collection<CitizenData> citizens) {
+        for (CitizenData citizen : citizens) {
+            if (citizen != null && citizen.isMapMarkerEnabled()) {
+                resolveMarkerImage(citizen);
             }
         }
-        PENDING_REBUILDS.clear();
     }
 
     @Nonnull
@@ -218,16 +151,29 @@ public final class CitizenMapMarkerAsset {
 
     @Nullable
     private static String ensureGeneratedImage(@Nullable String imageName, @Nonnull Supplier<byte[]> pngFactory) {
-        String assetPath = toAssetPath(imageName);
-        if (assetPath == null) {
+        if (imageName == null || imageName.isBlank()) {
+            return null;
+        }
+        if (ENSURED_GENERATED_IMAGES.contains(imageName)) {
+            return imageName;
+        }
+
+        Path imagePath = CUSTOM_MARKERS_PATH.resolve(imageName).normalize();
+        Path basePath = CUSTOM_MARKERS_PATH.toAbsolutePath().normalize();
+        if (!basePath.equals(imagePath.toAbsolutePath().normalize().getParent())) {
             return null;
         }
 
-        MarkerAsset asset = GENERATED_ASSETS.computeIfAbsent(assetPath, ignored -> {
-            byte[] pngBytes = pngFactory.get();
-            return pngBytes == null || pngBytes.length == 0 ? null : new MarkerAsset(assetPath, pngBytes);
-        });
-        return asset != null ? imageName : null;
+        byte[] pngBytes = pngFactory.get();
+        if (pngBytes == null || pngBytes.length == 0) {
+            return null;
+        }
+
+        if (writeMarkerPngIfChanged(imagePath, pngBytes)) {
+            ENSURED_GENERATED_IMAGES.add(imageName);
+            return imageName;
+        }
+        return null;
     }
 
     @Nullable
@@ -242,26 +188,7 @@ public final class CitizenMapMarkerAsset {
             return null;
         }
 
-        String assetPath = toAssetPath(imageName);
-        if (assetPath == null) {
-            return null;
-        }
-
-        try {
-            long modifiedAt = Files.getLastModifiedTime(iconPath, LinkOption.NOFOLLOW_LINKS).toMillis();
-            Long cachedModifiedAt = CUSTOM_ASSET_MODIFIED_AT.get(assetPath);
-            if (cachedModifiedAt == null || cachedModifiedAt != modifiedAt || !GENERATED_ASSETS.containsKey(assetPath)) {
-                byte[] pngBytes = createCustomMarkerPng(iconPath);
-                if (pngBytes == null || pngBytes.length == 0) {
-                    return null;
-                }
-                GENERATED_ASSETS.put(assetPath, new MarkerAsset(assetPath, pngBytes));
-                CUSTOM_ASSET_MODIFIED_AT.put(assetPath, modifiedAt);
-            }
-            return imageName;
-        } catch (IOException e) {
-            return null;
-        }
+        return iconPath != null ? imageName : null;
     }
 
     @Nullable
@@ -290,12 +217,18 @@ public final class CitizenMapMarkerAsset {
         }
     }
 
-    @Nullable
-    private static String toAssetPath(@Nullable String imageName) {
-        if (imageName == null || imageName.isBlank()) {
-            return null;
+    private static boolean writeMarkerPngIfChanged(@Nonnull Path imagePath, @Nonnull byte[] pngBytes) {
+        ensureCustomMarkerDirectory();
+        try {
+            if (Files.isRegularFile(imagePath, LinkOption.NOFOLLOW_LINKS)
+                    && Arrays.equals(Files.readAllBytes(imagePath), pngBytes)) {
+                return true;
+            }
+            Files.write(imagePath, pngBytes);
+            return true;
+        } catch (IOException e) {
+            return false;
         }
-        return ASSET_PREFIX + imageName;
     }
 
     @Nonnull
@@ -607,36 +540,6 @@ public final class CitizenMapMarkerAsset {
     }
 
     @Nullable
-    private static byte[] createCustomMarkerPng(@Nonnull Path iconPath) {
-        try {
-            BufferedImage src = ImageIO.read(iconPath.toFile());
-            if (src == null) {
-                return null;
-            }
-
-            BufferedImage out = new BufferedImage(ICON_SIZE, ICON_SIZE, BufferedImage.TYPE_INT_ARGB);
-            Graphics2D g = out.createGraphics();
-            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-            double scale = Math.min((double) ICON_SIZE / src.getWidth(), (double) ICON_SIZE / src.getHeight());
-            int drawWidth = Math.max(1, (int) Math.round(src.getWidth() * scale));
-            int drawHeight = Math.max(1, (int) Math.round(src.getHeight() * scale));
-            int drawX = (ICON_SIZE - drawWidth) / 2;
-            int drawY = (ICON_SIZE - drawHeight) / 2;
-            g.drawImage(src, drawX, drawY, drawWidth, drawHeight, (ImageObserver) null);
-            g.dispose();
-
-            ByteArrayOutputStream output = new ByteArrayOutputStream();
-            ImageIO.write(out, "png", output);
-            return output.toByteArray();
-        } catch (IOException e) {
-            return null;
-        }
-    }
-
-    @Nullable
     private static BufferedImage cropToOpaqueBounds(@Nonnull BufferedImage src) {
         int minX = src.getWidth();
         int minY = src.getHeight();
@@ -706,62 +609,4 @@ public final class CitizenMapMarkerAsset {
         return value.substring(0, endIndex);
     }
 
-    private static void scheduleRebuild(@Nonnull UUID viewerUuid, @Nonnull PacketHandler packetHandler) {
-        ScheduledFuture<?> existing = PENDING_REBUILDS.get(viewerUuid);
-        if (existing != null && !existing.isDone()) {
-            return;
-        }
-
-        ScheduledFuture<?> future = HytaleServer.SCHEDULED_EXECUTOR.schedule(
-                () -> {
-                    try {
-                        packetHandler.writeNoCache(new RequestCommonAssetsRebuild());
-                    } finally {
-                        PENDING_REBUILDS.remove(viewerUuid);
-                    }
-                },
-                REBUILD_DEBOUNCE_MS,
-                TimeUnit.MILLISECONDS
-        );
-        PENDING_REBUILDS.put(viewerUuid, future);
-    }
-
-    private static String computeHash(byte[] bytes) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(bytes));
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 is unavailable", e);
-        }
-    }
-
-    private static final class MarkerAsset extends CommonAsset {
-        private final byte[] pngBytes;
-
-        private MarkerAsset(@Nonnull String assetPath, @Nonnull byte[] pngBytes) {
-            super(assetPath, computeHash(pngBytes), pngBytes);
-            this.pngBytes = pngBytes;
-        }
-
-        @Override
-        protected CompletableFuture<byte[]> getBlob0() {
-            return CompletableFuture.completedFuture(pngBytes);
-        }
-
-        private static void sendToPlayer(@Nonnull PacketHandler packetHandler, @Nonnull CommonAsset asset) {
-            byte[] blob = asset.getBlob().join();
-            byte[][] parts = ArrayUtil.split(blob, ASSET_PACKET_SIZE);
-            Packet[] packets = new Packet[parts.length + 2];
-            packets[0] = new AssetInitialize(asset.toPacket(), blob.length);
-
-            for (int index = 0; index < parts.length; index++) {
-                packets[index + 1] = new AssetPart(parts[index]);
-            }
-
-            packets[packets.length - 1] = new AssetFinalize();
-            for (Packet packet : packets) {
-                packetHandler.write((ToClientPacket) packet);
-            }
-        }
-    }
 }

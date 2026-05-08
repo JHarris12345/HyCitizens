@@ -26,7 +26,7 @@ public class ConfigManager {
     private final Path configFile;
     private final Gson gson;
     private Map<String, Object> config;
-    private boolean deferSave = false;
+    private int batchDepth = 0;
     private boolean dirty = false;
 
     public ConfigManager(@Nonnull Path pluginDataFolder) {
@@ -37,13 +37,19 @@ public class ConfigManager {
     }
 
     public synchronized void beginBatch() {
-        this.deferSave = true;
-        this.dirty = false;
+        if (this.batchDepth == 0) {
+            this.dirty = false;
+        }
+        this.batchDepth++;
     }
 
     public synchronized void endBatch() {
-        this.deferSave = false;
-        if (this.dirty) {
+        if (this.batchDepth <= 0) {
+            return;
+        }
+
+        this.batchDepth--;
+        if (this.batchDepth == 0 && this.dirty) {
             saveConfig();
             this.dirty = false;
         }
@@ -214,7 +220,7 @@ public class ConfigManager {
     }
 
     private synchronized void conditionalSave() {
-        if (deferSave) {
+        if (batchDepth > 0) {
             dirty = true;
         } else {
             saveConfig();

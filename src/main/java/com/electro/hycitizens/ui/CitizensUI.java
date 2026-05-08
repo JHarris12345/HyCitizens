@@ -1,8 +1,10 @@
 package com.electro.hycitizens.ui;
 
 import au.ellie.hyui.builders.PageBuilder;
+import au.ellie.hyui.events.UIContext;
 import au.ellie.hyui.html.TemplateProcessor;
 import com.electro.hycitizens.HyCitizensPlugin;
+import com.electro.hycitizens.map.CitizenMapMarkerAsset;
 import com.electro.hycitizens.models.*;
 import com.hypixel.hytale.codec.Codec;
 import com.hypixel.hytale.common.util.RandomUtil;
@@ -186,6 +188,7 @@ public class CitizensUI {
         String selected = CitizenData.normalizeMapMarkerType(selectedValue);
         StringBuilder sb = new StringBuilder();
         appendOption(sb, CitizenData.MAP_MARKER_TYPE_PIN, "Pin", selected.equals(CitizenData.MAP_MARKER_TYPE_PIN));
+        appendOption(sb, CitizenData.MAP_MARKER_TYPE_CUSTOM, "Custom Image", selected.equals(CitizenData.MAP_MARKER_TYPE_CUSTOM));
         appendOption(sb, CitizenData.MAP_MARKER_TYPE_DOT, "Dot", selected.equals(CitizenData.MAP_MARKER_TYPE_DOT));
         appendOption(sb, CitizenData.MAP_MARKER_TYPE_STAR, "Star", selected.equals(CitizenData.MAP_MARKER_TYPE_STAR));
         appendOption(sb, CitizenData.MAP_MARKER_TYPE_DIAMOND, "Diamond", selected.equals(CitizenData.MAP_MARKER_TYPE_DIAMOND));
@@ -201,6 +204,62 @@ public class CitizensUI {
         appendOption(sb, CitizenData.MAP_MARKER_TYPE_HEART, "Heart", selected.equals(CitizenData.MAP_MARKER_TYPE_HEART));
         appendOption(sb, CitizenData.MAP_MARKER_TYPE_HOME, "Home", selected.equals(CitizenData.MAP_MARKER_TYPE_HOME));
         appendOption(sb, CitizenData.MAP_MARKER_TYPE_NPC_TYPE, "NPC Type", selected.equals(CitizenData.MAP_MARKER_TYPE_NPC_TYPE));
+        return sb.toString();
+    }
+
+    private static float getFloatValue(@Nonnull UIContext ctx, @Nonnull String id, float fallback) {
+        Optional<Double> doubleValue = ctx.getValue(id, Double.class);
+        if (doubleValue.isPresent()) {
+            return doubleValue.get().floatValue();
+        }
+
+        Optional<Float> floatValue = ctx.getValue(id, Float.class);
+        if (floatValue.isPresent()) {
+            return floatValue.get();
+        }
+
+        Optional<Integer> intValue = ctx.getValue(id, Integer.class);
+        if (intValue.isPresent()) {
+            return intValue.get();
+        }
+
+        Optional<String> stringValue = ctx.getValue(id, String.class);
+        if (stringValue.isPresent()) {
+            try {
+                return Float.parseFloat(stringValue.get().trim());
+            } catch (NumberFormatException ignored) {
+            }
+        }
+
+        return fallback;
+    }
+
+    private static float getNonNegativeFloatValue(@Nonnull UIContext ctx, @Nonnull String id, float fallback) {
+        return Math.max(0.0f, getFloatValue(ctx, id, fallback));
+    }
+
+    private String generateCustomMapMarkerIconOptions(@Nullable String selectedValue) {
+        String selected = CitizenData.normalizeMapMarkerCustomIcon(selectedValue);
+        List<String> customIcons = CitizenMapMarkerAsset.listCustomMarkerIcons();
+        StringBuilder sb = new StringBuilder();
+
+        sb.append("<option value=\"\"");
+        if (selected.isEmpty()) {
+            sb.append(" selected");
+        }
+        sb.append(">Select an image</option>\n");
+
+        for (String iconName : customIcons) {
+            String normalized = CitizenData.normalizeMapMarkerCustomIcon(iconName);
+            if (normalized.isEmpty()) {
+                continue;
+            }
+            sb.append("<option value=\"").append(escapeHtml(normalized)).append("\"");
+            if (normalized.equals(selected)) {
+                sb.append(" selected");
+            }
+            sb.append(">").append(escapeHtml(normalized)).append("</option>\n");
+        }
         return sb.toString();
     }
 
@@ -1578,7 +1637,7 @@ public class CitizensUI {
 
     public void openCreateCitizenGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store) {
         openCreateCitizenGUI(playerRef, store, true, "", 0, false, false,
-                false, CitizenData.MAP_MARKER_TYPE_PIN, "", false, "", 1.0f, true, "",
+                false, CitizenData.MAP_MARKER_TYPE_PIN, "", "", 0.0f, false, "", 1.0f, true, "",
                 1.0f, "", "", false, false, "", true, "", 25.0f);
     }
 
@@ -1590,13 +1649,14 @@ public class CitizensUI {
                                       boolean preserveState, String skinUsername, boolean rotateTowardsPlayer,
                                       String group, float lookAtDistance) {
         openCreateCitizenGUI(playerRef, store, isPlayerModel, name, nametagOffset, hideNametag, hideNpc,
-                mapMarkerEnabled, mapMarkerType, "", modelNametagEnabled, nametagModelId, nametagModelScale, rotateNametagTowardsPlayer,
+                mapMarkerEnabled, mapMarkerType, "", "", 0.0f, modelNametagEnabled, nametagModelId, nametagModelScale, rotateNametagTowardsPlayer,
                 modelId, scale, permission, permMessage, useLiveSkin, preserveState, skinUsername, rotateTowardsPlayer, group, lookAtDistance);
     }
 
     private void openCreateCitizenGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store,
                                       boolean isPlayerModel, String name, float nametagOffset, boolean hideNametag, boolean hideNpc,
                                       boolean mapMarkerEnabled, String mapMarkerType, String mapMarkerName,
+                                      String mapMarkerCustomIcon, float mapMarkerMaxDistance,
                                       boolean modelNametagEnabled, String nametagModelId, float nametagModelScale, boolean rotateNametagTowardsPlayer,
                                       String modelId, float scale, String permission, String permMessage, boolean useLiveSkin,
                                       boolean preserveState, String skinUsername, boolean rotateTowardsPlayer,
@@ -1613,6 +1673,11 @@ public class CitizensUI {
                 .setVariable("mapMarkerEnabled", mapMarkerEnabled)
                 .setVariable("mapMarkerTypeOptions", generateMapMarkerTypeOptions(mapMarkerType))
                 .setVariable("mapMarkerName", escapeHtml(mapMarkerName))
+                .setVariable("mapMarkerCustomIconOptions", generateCustomMapMarkerIconOptions(mapMarkerCustomIcon))
+                .setVariable("mapMarkerCustomIcon", escapeHtml(CitizenData.normalizeMapMarkerCustomIcon(mapMarkerCustomIcon)))
+                .setVariable("mapMarkerMaxDistance", Math.max(0.0f, mapMarkerMaxDistance))
+                .setVariable("isCustomMapMarker", CitizenData.MAP_MARKER_TYPE_CUSTOM.equals(CitizenData.normalizeMapMarkerType(mapMarkerType)))
+                .setVariable("customMarkerDirectory", "mods/HyCitizensData/Common/UI/WorldMap/MapMarkers")
                 .setVariable("group", escapeHtml(group))
                 .setVariable("groupOptions", groupOptionsHTML)
                 .setVariable("modelId", modelId.isEmpty() ? "PlayerTestModel_V" : modelId)
@@ -1699,6 +1764,20 @@ public class CitizensUI {
                                     <input type="text" id="map-marker-name" class="form-input" value="{{$mapMarkerName}}"
                                            placeholder="Leave empty to use citizen name" maxlength="64" />
                                     <p class="form-hint">Leave empty to use the citizen name</p>
+                                </div>
+                                {{#if isCustomMapMarker}}
+                                <div class="spacer-xs"></div>
+                                <div class="form-group" style="anchor-width: 420;">
+                                    <p class="form-label">Custom Marker Image</p>
+                                    <select id="map-marker-custom-icon" data-hyui-showlabel="true">
+                                        {{{$mapMarkerCustomIconOptions}}}
+                                    </select>
+                                    <p class="form-hint">Put PNG images in {{$customMarkerDirectory}}</p>
+                                </div>
+                                {{/if}}
+                                <div class="spacer-xs"></div>
+                                <div class="form-group" style="anchor-width: 360;">
+                                    {{@formField:id=map-marker-max-distance,label=Display View Distance,value={{$mapMarkerMaxDistance}},placeholder=0,min=0,max=100000,step=1,decimals=0,hint=0 uses the map view distance}}
                                 </div>
                                 {{/if}}
                             </div>
@@ -1898,7 +1977,7 @@ public class CitizensUI {
                 .fromHtml(html);
 
         setupCreateCitizenListeners(page, playerRef, store, isPlayerModel, name, nametagOffset, hideNametag, hideNpc,
-                mapMarkerEnabled, mapMarkerType, mapMarkerName,
+                mapMarkerEnabled, mapMarkerType, mapMarkerName, mapMarkerCustomIcon, mapMarkerMaxDistance,
                 modelNametagEnabled, nametagModelId, nametagModelScale, rotateNametagTowardsPlayer,
                 modelId, scale, permission, permMessage, useLiveSkin, skinUsername, rotateTowardsPlayer, group, lookAtDistance);
 
@@ -1906,11 +1985,13 @@ public class CitizensUI {
     }
 
     public void openEditCitizenGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store, @Nonnull CitizenData citizen) {
-        openEditCitizenGUI(playerRef, store, citizen, citizen.isMapMarkerEnabled(), citizen.getMapMarkerType(), citizen.getMapMarkerName());
+        openEditCitizenGUI(playerRef, store, citizen, citizen.isMapMarkerEnabled(), citizen.getMapMarkerType(),
+                citizen.getMapMarkerName(), citizen.getMapMarkerCustomIcon(), citizen.getMapMarkerMaxDistance());
     }
 
     private void openEditCitizenGUI(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store, @Nonnull CitizenData citizen,
-                                    boolean draftMapMarkerEnabled, @Nullable String draftMapMarkerType, @Nullable String draftMapMarkerName) {
+                                    boolean draftMapMarkerEnabled, @Nullable String draftMapMarkerType, @Nullable String draftMapMarkerName,
+                                    @Nullable String draftMapMarkerCustomIcon, float draftMapMarkerMaxDistance) {
         pendingFollowSelections.remove(playerRef.getUuid());
         List<String> allGroups = plugin.getCitizensManager().getAllGroups();
         String groupOptionsHTML = generateGroupDropdownOptions(citizen.getGroup(), allGroups);
@@ -1926,6 +2007,11 @@ public class CitizensUI {
                 .setVariable("mapMarkerEnabled", draftMapMarkerEnabled)
                 .setVariable("mapMarkerTypeOptions", generateMapMarkerTypeOptions(normalizedDraftMapMarkerType))
                 .setVariable("mapMarkerName", escapeHtml(draftMapMarkerName != null ? draftMapMarkerName : ""))
+                .setVariable("mapMarkerCustomIconOptions", generateCustomMapMarkerIconOptions(draftMapMarkerCustomIcon))
+                .setVariable("mapMarkerCustomIcon", escapeHtml(CitizenData.normalizeMapMarkerCustomIcon(draftMapMarkerCustomIcon)))
+                .setVariable("mapMarkerMaxDistance", Math.max(0.0f, draftMapMarkerMaxDistance))
+                .setVariable("isCustomMapMarker", CitizenData.MAP_MARKER_TYPE_CUSTOM.equals(normalizedDraftMapMarkerType))
+                .setVariable("customMarkerDirectory", "mods/HyCitizensData/Common/UI/WorldMap/MapMarkers")
                 .setVariable("groupOptions", groupOptionsHTML)
                 .setVariable("nametagSummary", buildNametagSummary(
                         citizen.getName(),
@@ -2005,6 +2091,20 @@ public class CitizensUI {
                                     <input type="text" id="map-marker-name" class="form-input" value="{{$mapMarkerName}}"
                                            placeholder="Leave empty to use citizen name" maxlength="64" />
                                     <p class="form-hint">Leave empty to use the citizen name</p>
+                                </div>
+                                {{#if isCustomMapMarker}}
+                                <div class="spacer-xs"></div>
+                                <div class="form-group" style="anchor-width: 420;">
+                                    <p class="form-label">Custom Marker Image</p>
+                                    <select id="map-marker-custom-icon" data-hyui-showlabel="true">
+                                        {{{$mapMarkerCustomIconOptions}}}
+                                    </select>
+                                    <p class="form-hint">Put PNG images in {{$customMarkerDirectory}}</p>
+                                </div>
+                                {{/if}}
+                                <div class="spacer-xs"></div>
+                                <div class="form-group" style="anchor-width: 360;">
+                                    {{@formField:id=map-marker-max-distance,label=Display View Distance,value={{$mapMarkerMaxDistance}},placeholder=0,min=0,max=100000,step=1,decimals=0,hint=0 uses the map view distance}}
                                 </div>
                                 {{/if}}
                             </div>
@@ -2239,7 +2339,7 @@ public class CitizensUI {
                 
                         <!-- Footer -->
                         <div class="footer">
-                            <button id="cancel-btn" class="secondary-button">Cancel</button>
+                            <button id="cancel-btn" class="secondary-button">Return</button>
                             <div class="spacer-h-md"></div>
                             <button id="save-btn" class="secondary-button" style="anchor-width: 220;">Save Changes</button>
                         </div>
@@ -2253,7 +2353,9 @@ public class CitizensUI {
                 .fromHtml(html);
 
         setupEditCitizenListeners(page, playerRef, store, citizen, draftMapMarkerEnabled, normalizedDraftMapMarkerType,
-                draftMapMarkerName != null ? draftMapMarkerName : "");
+                draftMapMarkerName != null ? draftMapMarkerName : "",
+                draftMapMarkerCustomIcon != null ? draftMapMarkerCustomIcon : "",
+                draftMapMarkerMaxDistance);
 
         page.open(store);
     }
@@ -2713,6 +2815,12 @@ public class CitizensUI {
         playerRef.sendMessage(Message.raw("Teleported to citizen '" + citizen.getName() + "'!").color(Color.GREEN));
     }
 
+    private void openManageForGroup(@Nonnull PlayerRef playerRef, @Nonnull Store<EntityStore> store,
+                                    @Nullable String groupName) {
+        String normalizedGroup = normalizeGroupPath(groupName);
+        openCitizensGUI(playerRef, store, Tab.MANAGE, "", normalizedGroup.isEmpty() ? null : normalizedGroup);
+    }
+
     private boolean cloneCitizenToPlayer(@Nonnull PlayerRef playerRef, @Nonnull CitizenData citizen) {
         Vector3d position = new Vector3d(playerRef.getTransform().getPosition());
         Vector3f rotation = new Vector3f(playerRef.getTransform().getRotation());
@@ -2764,6 +2872,8 @@ public class CitizensUI {
         clonedCitizen.setMapMarkerEnabled(citizen.isMapMarkerEnabled());
         clonedCitizen.setMapMarkerType(citizen.getMapMarkerType());
         clonedCitizen.setMapMarkerName(citizen.getMapMarkerName());
+        clonedCitizen.setMapMarkerCustomIcon(citizen.getMapMarkerCustomIcon());
+        clonedCitizen.setMapMarkerMaxDistance(citizen.getMapMarkerMaxDistance());
         clonedCitizen.setNpcHelmet(citizen.getNpcHelmet());
         clonedCitizen.setNpcChest(citizen.getNpcChest());
         clonedCitizen.setNpcGloves(citizen.getNpcGloves());
@@ -3453,6 +3563,7 @@ public class CitizensUI {
                                               boolean initialIsPlayerModel, String initialName, float initialNametagOffset,
                                               boolean initialHideNametag, boolean initialHideNpc,
                                               boolean initialMapMarkerEnabled, String initialMapMarkerType, String initialMapMarkerName,
+                                              String initialMapMarkerCustomIcon, float initialMapMarkerMaxDistance,
                                               boolean initialModelNametagEnabled, String initialNametagModelId,
                                               float initialNametagModelScale, boolean initialRotateNametagTowardsPlayer,
                                              String initialModelId, float initialScale, String initialPermission, String initialPermMessage, boolean initialUseLiveSkin,
@@ -3466,6 +3577,8 @@ public class CitizensUI {
         final boolean[] mapMarkerEnabled = {initialMapMarkerEnabled};
         final String[] mapMarkerType = {CitizenData.normalizeMapMarkerType(initialMapMarkerType)};
         final String[] mapMarkerName = {initialMapMarkerName != null ? initialMapMarkerName : ""};
+        final String[] mapMarkerCustomIcon = {CitizenData.normalizeMapMarkerCustomIcon(initialMapMarkerCustomIcon)};
+        final float[] mapMarkerMaxDistance = {Math.max(0.0f, initialMapMarkerMaxDistance)};
         final boolean[] modelNametagEnabled = {initialModelNametagEnabled};
         final String[] currentNametagModelId = {initialNametagModelId};
         final float[] currentNametagModelScale = {initialNametagModelScale};
@@ -3554,14 +3667,14 @@ public class CitizensUI {
                         rotateNametagTowardsPlayer[0],
                         updated -> openCreateCitizenGUI(
                                 playerRef, store, isPlayerModel[0], updated.name(), updated.offset(), updated.hideNametag(), hideNpc[0],
-                                mapMarkerEnabled[0], mapMarkerType[0], mapMarkerName[0],
+                                mapMarkerEnabled[0], mapMarkerType[0], mapMarkerName[0], mapMarkerCustomIcon[0], mapMarkerMaxDistance[0],
                                 updated.modelEnabled(), updated.modelId(), updated.modelScale(), updated.rotateModelTowardsPlayer(),
                                 currentModelId[0], currentScale[0], currentPermission[0], currentPermMessage[0], useLiveSkin[0], true,
                                 skinUsername[0], rotateTowardsPlayer[0], currentGroup[0], lookAtDistance[0]
                         ),
                         () -> openCreateCitizenGUI(
                                 playerRef, store, isPlayerModel[0], currentName[0], nametagOffset[0], hideNametag[0], hideNpc[0],
-                                mapMarkerEnabled[0], mapMarkerType[0], mapMarkerName[0],
+                                mapMarkerEnabled[0], mapMarkerType[0], mapMarkerName[0], mapMarkerCustomIcon[0], mapMarkerMaxDistance[0],
                                 modelNametagEnabled[0], currentNametagModelId[0], currentNametagModelScale[0], rotateNametagTowardsPlayer[0],
                                 currentModelId[0], currentScale[0], currentPermission[0], currentPermMessage[0], useLiveSkin[0], true,
                                 skinUsername[0], rotateTowardsPlayer[0], currentGroup[0], lookAtDistance[0]
@@ -3576,6 +3689,9 @@ public class CitizensUI {
             boolean enabled = ctx.getValue("map-marker-check", Boolean.class).orElse(false);
             if (mapMarkerEnabled[0]) {
                 mapMarkerName[0] = ctx.getValue("map-marker-name", String.class).orElse(mapMarkerName[0]);
+                mapMarkerCustomIcon[0] = CitizenData.normalizeMapMarkerCustomIcon(
+                        ctx.getValue("map-marker-custom-icon", String.class).orElse(mapMarkerCustomIcon[0]));
+                mapMarkerMaxDistance[0] = getNonNegativeFloatValue(ctx, "map-marker-max-distance", mapMarkerMaxDistance[0]);
             }
             if (enabled == mapMarkerEnabled[0]) {
                 return;
@@ -3583,7 +3699,7 @@ public class CitizensUI {
 
             mapMarkerEnabled[0] = enabled;
             openCreateCitizenGUI(playerRef, store, isPlayerModel[0], currentName[0], nametagOffset[0], hideNametag[0], hideNpc[0],
-                    mapMarkerEnabled[0], mapMarkerType[0], mapMarkerName[0],
+                    mapMarkerEnabled[0], mapMarkerType[0], mapMarkerName[0], mapMarkerCustomIcon[0], mapMarkerMaxDistance[0],
                     modelNametagEnabled[0], currentNametagModelId[0], currentNametagModelScale[0], rotateNametagTowardsPlayer[0],
                     currentModelId[0], currentScale[0], currentPermission[0], currentPermMessage[0], useLiveSkin[0], true,
                     skinUsername[0], rotateTowardsPlayer[0], currentGroup[0], lookAtDistance[0]);
@@ -3591,11 +3707,31 @@ public class CitizensUI {
 
         if (mapMarkerEnabled[0]) {
             page.addEventListener("map-marker-type", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+                boolean wasCustom = CitizenData.MAP_MARKER_TYPE_CUSTOM.equals(mapMarkerType[0]);
                 mapMarkerType[0] = CitizenData.normalizeMapMarkerType(
                         ctx.getValue("map-marker-type", String.class).orElse(CitizenData.MAP_MARKER_TYPE_PIN));
+                boolean isCustom = CitizenData.MAP_MARKER_TYPE_CUSTOM.equals(mapMarkerType[0]);
+                if (wasCustom != isCustom) {
+                    mapMarkerName[0] = ctx.getValue("map-marker-name", String.class).orElse(mapMarkerName[0]);
+                    mapMarkerMaxDistance[0] = getNonNegativeFloatValue(ctx, "map-marker-max-distance", mapMarkerMaxDistance[0]);
+                    openCreateCitizenGUI(playerRef, store, isPlayerModel[0], currentName[0], nametagOffset[0], hideNametag[0], hideNpc[0],
+                            mapMarkerEnabled[0], mapMarkerType[0], mapMarkerName[0], mapMarkerCustomIcon[0], mapMarkerMaxDistance[0],
+                            modelNametagEnabled[0], currentNametagModelId[0], currentNametagModelScale[0], rotateNametagTowardsPlayer[0],
+                            currentModelId[0], currentScale[0], currentPermission[0], currentPermMessage[0], useLiveSkin[0], true,
+                            skinUsername[0], rotateTowardsPlayer[0], currentGroup[0], lookAtDistance[0]);
+                }
             });
             page.addEventListener("map-marker-name", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
                 mapMarkerName[0] = ctx.getValue("map-marker-name", String.class).orElse("");
+            });
+            if (CitizenData.MAP_MARKER_TYPE_CUSTOM.equals(mapMarkerType[0])) {
+                page.addEventListener("map-marker-custom-icon", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+                    mapMarkerCustomIcon[0] = CitizenData.normalizeMapMarkerCustomIcon(
+                            ctx.getValue("map-marker-custom-icon", String.class).orElse(""));
+                });
+            }
+            page.addEventListener("map-marker-max-distance", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+                mapMarkerMaxDistance[0] = getNonNegativeFloatValue(ctx, "map-marker-max-distance", mapMarkerMaxDistance[0]);
             });
         }
 
@@ -3640,9 +3776,12 @@ public class CitizensUI {
                 mapMarkerType[0] = CitizenData.normalizeMapMarkerType(
                         ctx.getValue("map-marker-type", String.class).orElse(mapMarkerType[0]));
                 mapMarkerName[0] = ctx.getValue("map-marker-name", String.class).orElse(mapMarkerName[0]);
+                mapMarkerCustomIcon[0] = CitizenData.normalizeMapMarkerCustomIcon(
+                        ctx.getValue("map-marker-custom-icon", String.class).orElse(mapMarkerCustomIcon[0]));
+                mapMarkerMaxDistance[0] = getNonNegativeFloatValue(ctx, "map-marker-max-distance", mapMarkerMaxDistance[0]);
             }
             openCreateCitizenGUI(playerRef, store, true, currentName[0], nametagOffset[0], hideNametag[0], hideNpc[0],
-                    mapMarkerEnabled[0], mapMarkerType[0], mapMarkerName[0],
+                    mapMarkerEnabled[0], mapMarkerType[0], mapMarkerName[0], mapMarkerCustomIcon[0], mapMarkerMaxDistance[0],
                     modelNametagEnabled[0], currentNametagModelId[0], currentNametagModelScale[0], rotateNametagTowardsPlayer[0], currentModelId[0],
                     currentScale[0], currentPermission[0], currentPermMessage[0], useLiveSkin[0], true,
                     skinUsername[0], rotateTowardsPlayer[0], currentGroup[0], lookAtDistance[0]);
@@ -3653,9 +3792,12 @@ public class CitizensUI {
                 mapMarkerType[0] = CitizenData.normalizeMapMarkerType(
                         ctx.getValue("map-marker-type", String.class).orElse(mapMarkerType[0]));
                 mapMarkerName[0] = ctx.getValue("map-marker-name", String.class).orElse(mapMarkerName[0]);
+                mapMarkerCustomIcon[0] = CitizenData.normalizeMapMarkerCustomIcon(
+                        ctx.getValue("map-marker-custom-icon", String.class).orElse(mapMarkerCustomIcon[0]));
+                mapMarkerMaxDistance[0] = getNonNegativeFloatValue(ctx, "map-marker-max-distance", mapMarkerMaxDistance[0]);
             }
             openCreateCitizenGUI(playerRef, store, false, currentName[0], nametagOffset[0], hideNametag[0], hideNpc[0],
-                    mapMarkerEnabled[0], mapMarkerType[0], mapMarkerName[0],
+                    mapMarkerEnabled[0], mapMarkerType[0], mapMarkerName[0], mapMarkerCustomIcon[0], mapMarkerMaxDistance[0],
                     modelNametagEnabled[0], currentNametagModelId[0], currentNametagModelScale[0], rotateNametagTowardsPlayer[0], currentModelId[0],
                     currentScale[0], currentPermission[0], currentPermMessage[0], useLiveSkin[0], true,
                     skinUsername[0], rotateTowardsPlayer[0], currentGroup[0], lookAtDistance[0]);
@@ -3667,6 +3809,9 @@ public class CitizensUI {
                 mapMarkerType[0] = CitizenData.normalizeMapMarkerType(
                         ctx.getValue("map-marker-type", String.class).orElse(mapMarkerType[0]));
                 mapMarkerName[0] = ctx.getValue("map-marker-name", String.class).orElse(mapMarkerName[0]);
+                mapMarkerCustomIcon[0] = CitizenData.normalizeMapMarkerCustomIcon(
+                        ctx.getValue("map-marker-custom-icon", String.class).orElse(mapMarkerCustomIcon[0]));
+                mapMarkerMaxDistance[0] = getNonNegativeFloatValue(ctx, "map-marker-max-distance", mapMarkerMaxDistance[0]);
             }
 
             String name = currentName[0].trim();
@@ -3731,6 +3876,8 @@ public class CitizensUI {
             citizen.setMapMarkerEnabled(mapMarkerEnabled[0]);
             citizen.setMapMarkerType(mapMarkerType[0]);
             citizen.setMapMarkerName(mapMarkerName[0]);
+            citizen.setMapMarkerCustomIcon(mapMarkerCustomIcon[0]);
+            citizen.setMapMarkerMaxDistance(mapMarkerMaxDistance[0]);
             citizen.setGroup(currentGroup[0]);
             citizen.setLookAtDistance(lookAtDistance[0]);
             plugin.getCitizensManager().autoResolveAttackType(citizen);
@@ -3773,7 +3920,8 @@ public class CitizensUI {
 
     private void setupEditCitizenListeners(PageBuilder page, PlayerRef playerRef, Store<EntityStore> store,
                                            CitizenData citizen, boolean initialMapMarkerEnabled, String initialMapMarkerType,
-                                           String initialMapMarkerName) {
+                                           String initialMapMarkerName, String initialMapMarkerCustomIcon,
+                                           float initialMapMarkerMaxDistance) {
         final String[] currentName = {citizen.getName()};
         final float[] nametagOffset = {citizen.getNametagOffset()};
         final boolean[] hideNametag = {citizen.isHideNametag()};
@@ -3781,6 +3929,8 @@ public class CitizensUI {
         final boolean[] mapMarkerEnabled = {initialMapMarkerEnabled};
         final String[] mapMarkerType = {CitizenData.normalizeMapMarkerType(initialMapMarkerType)};
         final String[] mapMarkerName = {initialMapMarkerName != null ? initialMapMarkerName : ""};
+        final String[] mapMarkerCustomIcon = {CitizenData.normalizeMapMarkerCustomIcon(initialMapMarkerCustomIcon)};
+        final float[] mapMarkerMaxDistance = {Math.max(0.0f, initialMapMarkerMaxDistance)};
         final boolean[] modelNametagEnabled = {citizen.isModelNametagEnabled()};
         final String[] currentNametagModelId = {citizen.getNametagModelId()};
         final float[] currentNametagModelScale = {citizen.getNametagModelScale()};
@@ -3902,9 +4052,11 @@ public class CitizensUI {
                             citizen.setNametagModelId(currentNametagModelId[0]);
                             citizen.setNametagModelScale(currentNametagModelScale[0]);
                             citizen.setRotateNametagTowardsPlayer(rotateNametagTowardsPlayer[0]);
-                            openEditCitizenGUI(playerRef, store, citizen, mapMarkerEnabled[0], mapMarkerType[0], mapMarkerName[0]);
+                            openEditCitizenGUI(playerRef, store, citizen, mapMarkerEnabled[0], mapMarkerType[0],
+                                    mapMarkerName[0], mapMarkerCustomIcon[0], mapMarkerMaxDistance[0]);
                         },
-                        () -> openEditCitizenGUI(playerRef, store, citizen, mapMarkerEnabled[0], mapMarkerType[0], mapMarkerName[0])
+                        () -> openEditCitizenGUI(playerRef, store, citizen, mapMarkerEnabled[0], mapMarkerType[0],
+                                mapMarkerName[0], mapMarkerCustomIcon[0], mapMarkerMaxDistance[0])
                 ));
 
         page.addEventListener("hide-npc-check", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
@@ -3915,22 +4067,43 @@ public class CitizensUI {
             boolean enabled = ctx.getValue("map-marker-check", Boolean.class).orElse(false);
             if (mapMarkerEnabled[0]) {
                 mapMarkerName[0] = ctx.getValue("map-marker-name", String.class).orElse(mapMarkerName[0]);
+                mapMarkerCustomIcon[0] = CitizenData.normalizeMapMarkerCustomIcon(
+                        ctx.getValue("map-marker-custom-icon", String.class).orElse(mapMarkerCustomIcon[0]));
+                mapMarkerMaxDistance[0] = getNonNegativeFloatValue(ctx, "map-marker-max-distance", mapMarkerMaxDistance[0]);
             }
             if (enabled == mapMarkerEnabled[0]) {
                 return;
             }
 
             mapMarkerEnabled[0] = enabled;
-            openEditCitizenGUI(playerRef, store, citizen, mapMarkerEnabled[0], mapMarkerType[0], mapMarkerName[0]);
+            openEditCitizenGUI(playerRef, store, citizen, mapMarkerEnabled[0], mapMarkerType[0],
+                    mapMarkerName[0], mapMarkerCustomIcon[0], mapMarkerMaxDistance[0]);
         });
 
         if (mapMarkerEnabled[0]) {
             page.addEventListener("map-marker-type", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+                boolean wasCustom = CitizenData.MAP_MARKER_TYPE_CUSTOM.equals(mapMarkerType[0]);
                 mapMarkerType[0] = CitizenData.normalizeMapMarkerType(
                         ctx.getValue("map-marker-type", String.class).orElse(CitizenData.MAP_MARKER_TYPE_PIN));
+                boolean isCustom = CitizenData.MAP_MARKER_TYPE_CUSTOM.equals(mapMarkerType[0]);
+                if (wasCustom != isCustom) {
+                    mapMarkerName[0] = ctx.getValue("map-marker-name", String.class).orElse(mapMarkerName[0]);
+                    mapMarkerMaxDistance[0] = getNonNegativeFloatValue(ctx, "map-marker-max-distance", mapMarkerMaxDistance[0]);
+                    openEditCitizenGUI(playerRef, store, citizen, mapMarkerEnabled[0], mapMarkerType[0],
+                            mapMarkerName[0], mapMarkerCustomIcon[0], mapMarkerMaxDistance[0]);
+                }
             });
             page.addEventListener("map-marker-name", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
                 mapMarkerName[0] = ctx.getValue("map-marker-name", String.class).orElse("");
+            });
+            if (CitizenData.MAP_MARKER_TYPE_CUSTOM.equals(mapMarkerType[0])) {
+                page.addEventListener("map-marker-custom-icon", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+                    mapMarkerCustomIcon[0] = CitizenData.normalizeMapMarkerCustomIcon(
+                            ctx.getValue("map-marker-custom-icon", String.class).orElse(""));
+                });
+            }
+            page.addEventListener("map-marker-max-distance", CustomUIEventBindingType.ValueChanged, (event, ctx) -> {
+                mapMarkerMaxDistance[0] = getNonNegativeFloatValue(ctx, "map-marker-max-distance", mapMarkerMaxDistance[0]);
             });
         }
 
@@ -3962,10 +4135,14 @@ public class CitizensUI {
                 mapMarkerType[0] = CitizenData.normalizeMapMarkerType(
                         ctx.getValue("map-marker-type", String.class).orElse(mapMarkerType[0]));
                 mapMarkerName[0] = ctx.getValue("map-marker-name", String.class).orElse(mapMarkerName[0]);
+                mapMarkerCustomIcon[0] = CitizenData.normalizeMapMarkerCustomIcon(
+                        ctx.getValue("map-marker-custom-icon", String.class).orElse(mapMarkerCustomIcon[0]));
+                mapMarkerMaxDistance[0] = getNonNegativeFloatValue(ctx, "map-marker-max-distance", mapMarkerMaxDistance[0]);
             }
             isPlayerModel[0] = true;
             citizen.setPlayerModel(true);
-            openEditCitizenGUI(playerRef, store, citizen, mapMarkerEnabled[0], mapMarkerType[0], mapMarkerName[0]);
+            openEditCitizenGUI(playerRef, store, citizen, mapMarkerEnabled[0], mapMarkerType[0],
+                    mapMarkerName[0], mapMarkerCustomIcon[0], mapMarkerMaxDistance[0]);
         });
 
         page.addEventListener("type-entity", CustomUIEventBindingType.Activating, (event, ctx) -> {
@@ -3973,10 +4150,14 @@ public class CitizensUI {
                 mapMarkerType[0] = CitizenData.normalizeMapMarkerType(
                         ctx.getValue("map-marker-type", String.class).orElse(mapMarkerType[0]));
                 mapMarkerName[0] = ctx.getValue("map-marker-name", String.class).orElse(mapMarkerName[0]);
+                mapMarkerCustomIcon[0] = CitizenData.normalizeMapMarkerCustomIcon(
+                        ctx.getValue("map-marker-custom-icon", String.class).orElse(mapMarkerCustomIcon[0]));
+                mapMarkerMaxDistance[0] = getNonNegativeFloatValue(ctx, "map-marker-max-distance", mapMarkerMaxDistance[0]);
             }
             isPlayerModel[0] = false;
             citizen.setPlayerModel(false);
-            openEditCitizenGUI(playerRef, store, citizen, mapMarkerEnabled[0], mapMarkerType[0], mapMarkerName[0]);
+            openEditCitizenGUI(playerRef, store, citizen, mapMarkerEnabled[0], mapMarkerType[0],
+                    mapMarkerName[0], mapMarkerCustomIcon[0], mapMarkerMaxDistance[0]);
         });
 
         page.addEventListener("edit-tp-btn", CustomUIEventBindingType.Activating, event ->
@@ -3986,8 +4167,9 @@ public class CitizensUI {
                 cloneCitizenToPlayer(playerRef, citizen));
 
         page.addEventListener("edit-remove-btn", CustomUIEventBindingType.Activating, event -> {
+            String removedGroup = citizen.getGroup();
             removeCitizen(playerRef, citizen);
-            openCitizensGUI(playerRef, store, Tab.MANAGE);
+            openManageForGroup(playerRef, store, removedGroup);
         });
 
         page.addEventListener("edit-commands-btn", CustomUIEventBindingType.Activating, event -> {
@@ -4096,6 +4278,9 @@ public class CitizensUI {
                 mapMarkerType[0] = CitizenData.normalizeMapMarkerType(
                         ctx.getValue("map-marker-type", String.class).orElse(mapMarkerType[0]));
                 mapMarkerName[0] = ctx.getValue("map-marker-name", String.class).orElse(mapMarkerName[0]);
+                mapMarkerCustomIcon[0] = CitizenData.normalizeMapMarkerCustomIcon(
+                        ctx.getValue("map-marker-custom-icon", String.class).orElse(mapMarkerCustomIcon[0]));
+                mapMarkerMaxDistance[0] = getNonNegativeFloatValue(ctx, "map-marker-max-distance", mapMarkerMaxDistance[0]);
             }
 
             String name = currentName[0].trim();
@@ -4147,6 +4332,8 @@ public class CitizensUI {
             citizen.setMapMarkerEnabled(mapMarkerEnabled[0]);
             citizen.setMapMarkerType(mapMarkerType[0]);
             citizen.setMapMarkerName(mapMarkerName[0]);
+            citizen.setMapMarkerCustomIcon(mapMarkerCustomIcon[0]);
+            citizen.setMapMarkerMaxDistance(mapMarkerMaxDistance[0]);
             citizen.setGroup(currentGroup[0]);
 
             if (isPlayerModel[0]) {
@@ -4156,20 +4343,20 @@ public class CitizensUI {
                     citizen.setLastSkinUpdate(System.currentTimeMillis());
                     plugin.getCitizensManager().updateCitizen(citizen, true);
                     playerRef.sendMessage(Message.raw("Citizen '" + name + "' updated!").color(Color.GREEN));
-                    openCitizensGUI(playerRef, store, Tab.MANAGE);
+                    openManageForGroup(playerRef, store, citizen.getGroup());
                 } else if (skinUsername[0].trim().isEmpty()) {
                     plugin.getCitizensManager().updateCitizenSkinFromPlayer(citizen, playerRef, false);
                     plugin.getCitizensManager().updateCitizen(citizen, true);
                     playerRef.sendMessage(Message.raw("Citizen '" + name + "' updated!").color(Color.GREEN));
-                    openCitizensGUI(playerRef, store, Tab.MANAGE);
+                    openManageForGroup(playerRef, store, citizen.getGroup());
                 } else if (CitizenData.isGeneratedSkinUsername(skinUsername[0].trim()) && citizen.getCachedSkin() != null) {
                     plugin.getCitizensManager().updateCitizen(citizen, true);
                     playerRef.sendMessage(Message.raw("Citizen '" + name + "' updated!").color(Color.GREEN));
-                    openCitizensGUI(playerRef, store, Tab.MANAGE);
+                    openManageForGroup(playerRef, store, citizen.getGroup());
                 } else if (skinUsername[0].equals(oldSkinUsername) && citizen.getCachedSkin() != null) {
                     plugin.getCitizensManager().updateCitizen(citizen, true);
                     playerRef.sendMessage(Message.raw("Citizen '" + name + "' updated!").color(Color.GREEN));
-                    openCitizensGUI(playerRef, store, Tab.MANAGE);
+                    openManageForGroup(playerRef, store, citizen.getGroup());
                 } else {
                     playerRef.sendMessage(Message.raw("Fetching skin for \"" + skinUsername[0] + "\"...").color(Color.YELLOW));
                     com.electro.hycitizens.util.SkinUtilities.getSkin(skinUsername[0].trim()).thenAccept(skin -> {
@@ -4182,7 +4369,7 @@ public class CitizensUI {
                                 }
                                 plugin.getCitizensManager().updateCitizen(citizen, true);
                                 playerRef.sendMessage(Message.raw("Citizen '" + name + "' updated!").color(Color.GREEN));
-                                openCitizensGUI(playerRef, store, Tab.MANAGE);
+                                openManageForGroup(playerRef, store, citizen.getGroup());
                             });
                         }
                     });
@@ -4190,12 +4377,12 @@ public class CitizensUI {
             } else {
                 plugin.getCitizensManager().updateCitizen(citizen, true);
                 playerRef.sendMessage(Message.raw("Citizen '" + name + "' updated!").color(Color.GREEN));
-                openCitizensGUI(playerRef, store, Tab.MANAGE);
+                openManageForGroup(playerRef, store, citizen.getGroup());
             }
         });
 
         page.addEventListener("cancel-btn", CustomUIEventBindingType.Activating, event ->
-                openCitizensGUI(playerRef, store, Tab.MANAGE));
+                openManageForGroup(playerRef, store, currentGroup[0]));
     }
 
     private void setupCommandActionsListeners(PageBuilder page, PlayerRef playerRef, Store<EntityStore> store,

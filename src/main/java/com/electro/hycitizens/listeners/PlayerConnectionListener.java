@@ -112,7 +112,7 @@ public class PlayerConnectionListener {
 
                                         Message.raw(" | ").color(Color.DARK_GRAY),
 
-                                        Message.raw("Support (Click)").color(Color.PINK)
+                                        Message.raw("Donate (Click)").color(Color.PINK)
                                                 .link("https://ko-fi.com/electrogames"),
 
                                         Message.raw(" | ").color(Color.DARK_GRAY),

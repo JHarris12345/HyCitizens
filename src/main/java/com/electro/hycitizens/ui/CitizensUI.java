@@ -1677,7 +1677,7 @@ public class CitizensUI {
                 .setVariable("mapMarkerCustomIcon", escapeHtml(CitizenData.normalizeMapMarkerCustomIcon(mapMarkerCustomIcon)))
                 .setVariable("mapMarkerMaxDistance", Math.max(0.0f, mapMarkerMaxDistance))
                 .setVariable("isCustomMapMarker", CitizenData.MAP_MARKER_TYPE_CUSTOM.equals(CitizenData.normalizeMapMarkerType(mapMarkerType)))
-                .setVariable("customMarkerDirectory", "mods/HyCitizensRoles/Common/UI/WorldMap/MapMarkers")
+                .setVariable("customMarkerDirectory", "mods/HyCitizensData/Common/UI/WorldMap/MapMarkers")
                 .setVariable("group", escapeHtml(group))
                 .setVariable("groupOptions", groupOptionsHTML)
                 .setVariable("modelId", modelId.isEmpty() ? "PlayerTestModel_V" : modelId)
@@ -2011,7 +2011,7 @@ public class CitizensUI {
                 .setVariable("mapMarkerCustomIcon", escapeHtml(CitizenData.normalizeMapMarkerCustomIcon(draftMapMarkerCustomIcon)))
                 .setVariable("mapMarkerMaxDistance", Math.max(0.0f, draftMapMarkerMaxDistance))
                 .setVariable("isCustomMapMarker", CitizenData.MAP_MARKER_TYPE_CUSTOM.equals(normalizedDraftMapMarkerType))
-                .setVariable("customMarkerDirectory", "mods/HyCitizensRoles/Common/UI/WorldMap/MapMarkers")
+                .setVariable("customMarkerDirectory", "mods/HyCitizensData/Common/UI/WorldMap/MapMarkers")
                 .setVariable("groupOptions", groupOptionsHTML)
                 .setVariable("nametagSummary", buildNametagSummary(
                         citizen.getName(),

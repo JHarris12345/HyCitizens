@@ -13,7 +13,7 @@ import com.electro.hycitizens.models.CitizenData;
 import com.electro.hycitizens.ui.CitizensUI;
 import com.electro.hycitizens.ui.SkinCustomizerUI;
 import com.electro.hycitizens.util.ConfigManager;
-import com.electro.hycitizens.util.RoleAssetPackManager;
+import com.electro.hycitizens.util.DataAssetPackManager;
 import com.electro.hycitizens.util.UpdateChecker;
 import com.hypixel.hytale.component.ComponentType;
 import com.hypixel.hytale.event.EventPriority;
@@ -65,9 +65,12 @@ public class HyCitizensPlugin extends JavaPlugin {
         // Initialize config manager
         this.configManager = new ConfigManager(Paths.get("mods", "HyCitizensData"));
 
-        this.generatedRolesPath = Paths.get("mods", "HyCitizensRoles", "Server", "NPC", "Roles");
+        this.generatedRolesPath = DataAssetPackManager.GENERATED_ROLES_PATH;
 
-        RoleAssetPackManager.setup();
+        if (DataAssetPackManager.setup()) {
+            return;
+        }
+
         CitizenMapMarkerAsset.ensureBuiltInMarkerFiles();
         // TEMPORARY WORKAROUND: some persisted NPCs reload with generic roles, so we persist the owning
         // citizen id directly on the NPC entity to make rebind and nametag recovery deterministic.
@@ -107,6 +110,10 @@ public class HyCitizensPlugin extends JavaPlugin {
 
     @Override
     protected void start() {
+        if (citizensManager == null) {
+            return;
+        }
+
         UpdateChecker.checkAsync();
 
         // Regenerate all roles

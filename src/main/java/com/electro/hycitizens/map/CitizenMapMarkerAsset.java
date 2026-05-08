@@ -1,6 +1,7 @@
 package com.electro.hycitizens.map;
 
 import com.electro.hycitizens.models.CitizenData;
+import com.electro.hycitizens.util.DataAssetPackManager;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -23,7 +24,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -35,7 +35,7 @@ import java.util.function.Supplier;
 
 public final class CitizenMapMarkerAsset {
     public static final String DEFAULT_MARKER_IMAGE = "hycitizens-pin.png";
-    public static final Path CUSTOM_MARKERS_PATH = Paths.get("mods", "HyCitizensRoles", "Common", "UI", "WorldMap", "MapMarkers");
+    public static final Path CUSTOM_MARKERS_PATH = DataAssetPackManager.MAP_MARKERS_PATH;
     private static final int ICON_SIZE = 32;
     private static final int NPC_CONTENT_SCALE_PERCENT = 96;
     private static final Set<String> ENSURED_GENERATED_IMAGES = ConcurrentHashMap.newKeySet();

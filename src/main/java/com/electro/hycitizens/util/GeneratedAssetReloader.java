@@ -8,6 +8,7 @@ import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -19,6 +20,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import static com.hypixel.hytale.logger.HytaleLogger.getLogger;
 
 public final class GeneratedAssetReloader {
+    private static final Path ROLES_DIR = Paths.get("mods", "HyCitizensData", "Server", "NPC", "Roles");
     private static final Path TEMP_ROLES_DIR = Paths.get("mods", "HyCitizensData", "tmp", "roles");
     private static final Path TEMP_ATTITUDES_DIR = Paths.get("mods", "HyCitizensData", "tmp", "attitudes");
     private static final Path TEMP_GROUPS_DIR = Paths.get("mods", "HyCitizensData", "tmp", "groups");
@@ -32,7 +34,7 @@ public final class GeneratedAssetReloader {
     static {
         try {
             cleanup();
-            Files.createDirectories(TEMP_ROLES_DIR);
+            Files.createDirectories(ROLES_DIR);
             Files.createDirectories(TEMP_ATTITUDES_DIR);
             Files.createDirectories(TEMP_GROUPS_DIR);
         } catch (IOException e) {
@@ -44,6 +46,19 @@ public final class GeneratedAssetReloader {
         cleanupDirectory(roleFiles, TEMP_ROLES_DIR);
         cleanupDirectory(attitudeFiles, TEMP_ATTITUDES_DIR);
         cleanupDirectory(groupFiles, TEMP_GROUPS_DIR);
+        try {
+            if (Files.exists(ROLES_DIR)) {
+                try (DirectoryStream<Path> stream = Files.newDirectoryStream(ROLES_DIR, "*.json")) {
+                    for (Path file : stream) {
+                        try {
+                            Files.deleteIfExists(file);
+                        } catch (IOException ignored) {
+                        }
+                    }
+                }
+            }
+        } catch (IOException ignored) {
+        }
     }
 
     private static void cleanupDirectory(Map<String, Path> fileMap, Path directory) {
@@ -86,6 +101,10 @@ public final class GeneratedAssetReloader {
 
             BuilderInfo builderInfo = builderManager.tryGetBuilderInfo(index);
             if (builderInfo != null) {
+                builderInfo.setForceValidation();
+                if (!builderManager.validateBuilder(builderInfo)) {
+                    return false;
+                }
                 BuilderManager.onBuilderReloaded(builderInfo);
             }
             return true;
@@ -200,12 +219,39 @@ public final class GeneratedAssetReloader {
             BuilderManager builderManager = npcPlugin.getBuilderManager();
 
             int existingIndex = builderManager.getIndex(builderName);
-            if (existingIndex != Integer.MIN_VALUE && !allowUpdate) {
-                return existingIndex;
+            if (existingIndex != Integer.MIN_VALUE) {
+                BuilderInfo existingInfo = builderManager.tryGetBuilderInfo(existingIndex);
+                if (existingInfo != null && !existingInfo.isValid()) {
+                    removeNpcBuilder(builderName);
+                    existingIndex = Integer.MIN_VALUE;
+                } else if (!allowUpdate) {
+                    return existingIndex;
+                }
             }
 
-            Path roleFile = TEMP_ROLES_DIR.resolve(builderName + ".json");
-            Files.write(roleFile, jsonContent.getBytes(StandardCharsets.UTF_8));
+            Files.createDirectories(ROLES_DIR);
+            Path roleFile = ROLES_DIR.resolve(builderName + ".json");
+            boolean diskContentChanged = true;
+            if (Files.exists(roleFile)) {
+                try {
+                    String existingDiskContent = Files.readString(roleFile, StandardCharsets.UTF_8);
+                    if (jsonContent.replace("\r\n", "\n").equals(existingDiskContent.replace("\r\n", "\n"))) {
+                        diskContentChanged = false;
+                    }
+                } catch (IOException ignored) {
+                }
+            }
+
+            if (!diskContentChanged && existingIndex != Integer.MIN_VALUE) {
+                BuilderInfo existingInfo = builderManager.tryGetBuilderInfo(existingIndex);
+                if (existingInfo != null && existingInfo.isValid()) {
+                    return existingIndex;
+                }
+            }
+
+            if (diskContentChanged) {
+                Files.writeString(roleFile, jsonContent, StandardCharsets.UTF_8);
+            }
 
             ArrayList<String> errors = new ArrayList<>();
             int index = builderManager.loadFile(roleFile, false, errors);
@@ -221,15 +267,16 @@ public final class GeneratedAssetReloader {
                 return Integer.MIN_VALUE;
             }
 
-            roleFiles.put(builderName, roleFile);
-
             BuilderInfo builderInfo = builderManager.tryGetBuilderInfo(index);
             if (builderInfo != null) {
+                builderInfo.setForceValidation();
                 if (!builderManager.validateBuilder(builderInfo)) {
                     getLogger().atWarning().log("[HyCitizens] Role '" + builderName + "' failed validation after loading");
                     return Integer.MIN_VALUE;
                 }
-                BuilderManager.onBuilderReloaded(builderInfo);
+                if (existingIndex != Integer.MIN_VALUE && diskContentChanged) {
+                    BuilderManager.onBuilderReloaded(builderInfo);
+                }
             }
 
             return index;

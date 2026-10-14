@@ -37,7 +37,7 @@ public class DataAssetPackManager {
 
     private static final Path LEGACY_ASSET_PACK_PATH = Paths.get("mods", "HyCitizensRoles");
     private static final Path MIGRATION_CONFLICTS_PATH = DATA_PACK_PATH.resolve("MigrationConflicts");
-    public static final String SERVER_VERSION = ">=0.6.0-pre.13.1 <0.7.0";
+    public static final String SERVER_VERSION = ">=0.7.0";
 
     public static boolean setup() {
         Path configPath = Paths.get("config.json");
@@ -53,6 +53,11 @@ public class DataAssetPackManager {
             if (Files.exists(DATA_PACK_PATH) && hasOldDataPackStructure()) {
                 getLogger().atInfo().log("[HyCitizens] Detected old data pack structure - migrating to new system...");
                 migrateFromOldDataPackStructure();
+            }
+
+            // Cleanup any loose generated assets
+            if (Files.exists(DATA_PACK_PATH)) {
+                cleanupLooseGeneratedAssets();
             }
 
             // Create manifest.json for HyCitizensData
@@ -83,9 +88,7 @@ public class DataAssetPackManager {
     private static boolean hasOldDataPackStructure() {
         Path commonPath = DATA_PACK_PATH.resolve("Common");
         Path serverPath = DATA_PACK_PATH.resolve("Server");
-        Path manifestPath = DATA_PACK_PATH.resolve("manifest.json");
-
-        return Files.exists(commonPath) || Files.exists(serverPath) || Files.exists(manifestPath);
+        return Files.exists(commonPath) || Files.exists(serverPath);
     }
 
     private static void migrateFromOldDataPackStructure() throws IOException {
@@ -124,27 +127,36 @@ public class DataAssetPackManager {
             }
         }
 
-        // Delete old data pack structure
+        // Delete old Common folder
         Path commonPath = DATA_PACK_PATH.resolve("Common");
-        Path serverPath = DATA_PACK_PATH.resolve("Server");
-        Path manifestPath = DATA_PACK_PATH.resolve("manifest.json");
-
         if (Files.exists(commonPath)) {
             deleteDirectoryRecursively(commonPath);
             getLogger().atInfo().log("[HyCitizens] Removed old 'Common' folder");
         }
 
+        // Delete old Server folder so stale/unvalidated roles are not loaded by Hytale at boot
+        Path serverPath = DATA_PACK_PATH.resolve("Server");
         if (Files.exists(serverPath)) {
             deleteDirectoryRecursively(serverPath);
             getLogger().atInfo().log("[HyCitizens] Removed old 'Server' folder");
         }
+    }
 
-        if (Files.exists(manifestPath)) {
-            Files.delete(manifestPath);
-            getLogger().atInfo().log("[HyCitizens] Removed old manifest.json");
+    private static void cleanupLooseGeneratedAssets() {
+        cleanupDirectoryIfExists(DATA_PACK_PATH.resolve("generated_roles"));
+        cleanupDirectoryIfExists(DATA_PACK_PATH.resolve("generated_attitudes"));
+        cleanupDirectoryIfExists(DATA_PACK_PATH.resolve("generated_groups"));
+    }
+
+    private static void cleanupDirectoryIfExists(Path dir) {
+        if (!Files.exists(dir) || !Files.isDirectory(dir)) {
+            return;
         }
-
-        getLogger().atInfo().log("[HyCitizens] Migration complete - now using programmatic asset registration!");
+        try {
+            deleteDirectoryRecursively(dir);
+        } catch (IOException e) {
+            getLogger().atWarning().log("[HyCitizens] Failed cleaning directory " + dir + ": " + e.getMessage());
+        }
     }
 
     private static void deleteDirectoryRecursively(@Nonnull Path directory) throws IOException {

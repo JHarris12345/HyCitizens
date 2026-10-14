@@ -9,10 +9,12 @@ import com.hypixel.hytale.component.RemoveReason;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.component.query.Query;
 import com.hypixel.hytale.component.system.RefSystem;
+import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 
 import javax.annotation.Nonnull;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class DuplicateNametagPrevention extends RefSystem<EntityStore> {
@@ -33,10 +35,12 @@ public class DuplicateNametagPrevention extends RefSystem<EntityStore> {
             return;
         }
 
-        String identityKey = nametagComponent.getCitizenId() + ":" + nametagComponent.getLineIndex();
+        String identityKey = getWorldKey(store) + ":" + nametagComponent.getCitizenId() + ":" + nametagComponent.getLineIndex();
         Ref<EntityStore> existingRef = this.activeNametags.get(identityKey);
         if (existingRef != null && existingRef.isValid() && !existingRef.equals(ref)) {
-            commandBuffer.removeEntity(ref, RemoveReason.REMOVE);
+            if (ref.isValid()) {
+                commandBuffer.tryRemoveEntity(ref, RemoveReason.REMOVE);
+            }
             return;
         }
 
@@ -53,11 +57,24 @@ public class DuplicateNametagPrevention extends RefSystem<EntityStore> {
             return;
         }
 
-        String identityKey = nametagComponent.getCitizenId() + ":" + nametagComponent.getLineIndex();
+        String identityKey = getWorldKey(store) + ":" + nametagComponent.getCitizenId() + ":" + nametagComponent.getLineIndex();
         Ref<EntityStore> existingRef = this.activeNametags.get(identityKey);
         if (existingRef != null && existingRef.equals(ref)) {
             this.activeNametags.remove(identityKey);
         }
+    }
+
+    private String getWorldKey(@Nonnull Store<EntityStore> store) {
+        if (store.getExternalData() != null && store.getExternalData().getWorld() != null) {
+            World world = store.getExternalData().getWorld();
+            if (world.getWorldConfig() != null && world.getWorldConfig().getUuid() != null) {
+                return world.getWorldConfig().getUuid().toString();
+            }
+            if (world.getName() != null) {
+                return world.getName();
+            }
+        }
+        return "global";
     }
 
     @Nonnull

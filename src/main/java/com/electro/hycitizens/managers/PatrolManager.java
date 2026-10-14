@@ -1,15 +1,20 @@
 package com.electro.hycitizens.managers;
 
+import com.electro.hycitizens.api.scripting.ScriptManager;
 import com.electro.hycitizens.models.CitizenData;
 import com.electro.hycitizens.models.PatrolPath;
 import com.electro.hycitizens.models.PatrolWaypoint;
 import com.electro.hycitizens.util.ConfigManager;
 import com.hypixel.hytale.component.*;
+import com.hypixel.hytale.math.shape.Box;
+import com.hypixel.hytale.math.util.ChunkUtil;
 import com.hypixel.hytale.math.vector.Rotation3f;
 import org.joml.Vector3d;
 import com.hypixel.hytale.server.core.HytaleServer;
 import com.hypixel.hytale.server.core.entity.UUIDComponent;
 import com.hypixel.hytale.server.core.entity.entities.ProjectileComponent;
+import com.hypixel.hytale.server.core.modules.entity.component.BoundingBox;
+import com.hypixel.hytale.server.core.modules.entity.component.Intangible;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.modules.entity.tracker.NetworkId;
 import com.hypixel.hytale.server.core.universe.Universe;
@@ -37,12 +42,16 @@ public class PatrolManager {
     private static final long PATROL_RECOVERY_COOLDOWN_MS = 4_000L;
     private static final double PATROL_PROGRESS_DISTANCE_SQUARED = 0.64;
     private static final double PATROL_PROGRESS_DISTANCE_DELTA = 0.75;
+    private static final long SPAWN_FAILURE_INITIAL_BACKOFF_MS = 3_000L;
+    private static final long SPAWN_FAILURE_MAX_BACKOFF_MS = 30_000L;
+    private static final long SPAWN_WARNING_LOG_INTERVAL_MS = 30_000L;
 
     private final ConfigManager config;
     private final CitizensManager citizensManager;
     private final Map<String, PatrolPath> paths = new ConcurrentHashMap<>();
     private final Map<String, PatrolSession> activeSessions = new ConcurrentHashMap<>();
     private final Map<String, Ref<EntityStore>> moveTargets = new ConcurrentHashMap<>();
+    private final Map<String, Long> lastSpawnWarningLogMs = new ConcurrentHashMap<>();
     private ScheduledFuture<?> monitorTask;
 
     private static final class PatrolSession {
@@ -57,6 +66,8 @@ public class PatrolManager {
         volatile long lastProgressAtMs;
         volatile long lastRecoveryAtMs;
         volatile int recoveryStage;
+        volatile long lastSpawnFailureMs;
+        volatile int spawnFailureCount;
 
         PatrolSession(@Nonnull String citizenId, @Nonnull String pathName) {
             this.citizenId = citizenId;
@@ -70,6 +81,8 @@ public class PatrolManager {
             this.lastProgressAtMs = System.currentTimeMillis();
             this.lastRecoveryAtMs = 0L;
             this.recoveryStage = 0;
+            this.lastSpawnFailureMs = 0L;
+            this.spawnFailureCount = 0;
         }
     }
 
@@ -92,9 +105,19 @@ public class PatrolManager {
         }, MONITOR_INTERVAL_MS, MONITOR_INTERVAL_MS, TimeUnit.MILLISECONDS);
     }
 
+    private long computeSpawnBackoffMs(int failureCount) {
+        if (failureCount <= 1) {
+            return SPAWN_FAILURE_INITIAL_BACKOFF_MS;
+        }
+        return Math.min(SPAWN_FAILURE_MAX_BACKOFF_MS, SPAWN_FAILURE_INITIAL_BACKOFF_MS * (1L << Math.min(failureCount - 1, 4)));
+    }
+
     private void tickSession(@Nonnull PatrolSession session) {
         long now = System.currentTimeMillis();
         if (session.pauseUntilMs != 0 && now < session.pauseUntilMs) {
+            return;
+        }
+        if (session.lastSpawnFailureMs != 0 && (now - session.lastSpawnFailureMs) < computeSpawnBackoffMs(session.spawnFailureCount)) {
             return;
         }
 
@@ -136,9 +159,37 @@ public class PatrolManager {
 
         world.execute(() -> {
             Vector3d waypointPosition = waypoints.get(currentIndex).toVector3d();
+            long waypointChunkIndex = ChunkUtil.indexChunkFromBlock(waypointPosition.x, waypointPosition.z);
+            if (world.getChunkStore().getChunkReference(waypointChunkIndex) == null) {
+                session.lastProgressAtMs = System.currentTimeMillis();
+                return;
+            }
+
+            Ref<EntityStore> npcRef = citizen.getNpcRef();
+            if (npcRef == null || !npcRef.isValid()) {
+                return;
+            }
+
+            TransformComponent npcTransform = npcRef.getStore().getComponent(npcRef, TransformComponent.getComponentType());
+            if (npcTransform == null || npcTransform.getPosition() == null) {
+                return;
+            }
+
+            long npcChunkIndex = ChunkUtil.indexChunkFromBlock(npcTransform.getPosition().x, npcTransform.getPosition().z);
+            if (world.getChunkStore().getChunkReference(npcChunkIndex) == null) {
+                session.lastProgressAtMs = System.currentTimeMillis();
+                return;
+            }
+
             Ref<EntityStore> targetRef = ensureMoveTarget(citizen, world, waypointPosition);
             if (targetRef == null || !targetRef.isValid()) {
+                session.lastSpawnFailureMs = System.currentTimeMillis();
+                session.spawnFailureCount++;
                 return;
+            }
+            if (session.spawnFailureCount > 0) {
+                session.spawnFailureCount = 0;
+                session.lastSpawnFailureMs = 0L;
             }
 
             TransformComponent targetTransform = targetRef.getStore().getComponent(targetRef, TransformComponent.getComponentType());
@@ -149,16 +200,6 @@ public class PatrolManager {
             if (resumingFromPause) {
                 targetTransform.setPosition(waypointPosition);
                 resetProgressTracking(session, citizen.getCurrentPosition(), Double.MAX_VALUE, currentIndex);
-                return;
-            }
-
-            Ref<EntityStore> npcRef = citizen.getNpcRef();
-            if (npcRef == null || !npcRef.isValid()) {
-                return;
-            }
-
-            TransformComponent npcTransform = npcRef.getStore().getComponent(npcRef, TransformComponent.getComponentType());
-            if (npcTransform == null) {
                 return;
             }
 
@@ -361,10 +402,16 @@ public class PatrolManager {
 
             Ref<EntityStore> targetRef = world.getEntityStore().getStore().addEntity(holder, AddReason.SPAWN);
             if (targetRef == null || !targetRef.isValid()) {
-                getLogger().atWarning().log("Failed to spawn move target entity for citizen " + citizen.getId());
+                long now = System.currentTimeMillis();
+                Long lastLog = lastSpawnWarningLogMs.get(citizen.getId());
+                if (lastLog == null || (now - lastLog) >= SPAWN_WARNING_LOG_INTERVAL_MS) {
+                    lastSpawnWarningLogMs.put(citizen.getId(), now);
+                    getLogger().atWarning().log("Failed to spawn move target entity for citizen " + citizen.getId());
+                }
                 return;
             }
 
+            lastSpawnWarningLogMs.remove(citizen.getId());
             moveTargets.put(citizen.getId(), targetRef);
 
             bindMoveTarget(citizen, targetRef);
@@ -430,7 +477,7 @@ public class PatrolManager {
         if ("PATROL".equals(citizen.getMovementBehavior().getType())) {
             return true;
         }
-        if ("FOLLOW_PLAYER".equals(citizen.getMovementBehavior().getType())) {
+        if (ScriptManager.get().isFollowingPlayer(citizen.getId())) {
             return true;
         }
         if ("FOLLOW_CITIZEN".equals(citizen.getMovementBehavior().getType())
@@ -448,15 +495,42 @@ public class PatrolManager {
             return;
         }
 
+        PatrolSession session = activeSessions.get(citizen.getId());
+        if (session != null) {
+            PatrolPath path = paths.get(session.pathName);
+            if (path != null && !path.getWaypoints().isEmpty()) {
+                int idx = Math.max(0, Math.min(session.waypointIndex, path.getWaypoints().size() - 1));
+                Vector3d wpPos = path.getWaypoints().get(idx).toVector3d();
+                ensureMoveTarget(citizen, world, wpPos);
+                return;
+            }
+        }
+
         Vector3d targetPosition = position;
         if (targetPosition == null) {
             targetPosition = citizen.getCurrentPosition() != null ? citizen.getCurrentPosition() : citizen.getPosition();
         }
-        ensureMoveTarget(citizen, world, new Vector3d(targetPosition.x, targetPosition.y, targetPosition.z));
+        if (targetPosition != null) {
+            ensureMoveTarget(citizen, world, new Vector3d(targetPosition.x, targetPosition.y, targetPosition.z));
+        }
     }
 
     private void cleanupMoveTarget(@Nonnull CitizenData citizen, @Nonnull World world) {
+        lastSpawnWarningLogMs.remove(citizen.getId());
         Ref<EntityStore> targetRef = moveTargets.remove(citizen.getId());
+        Ref<EntityStore> npcRef = citizen.getNpcRef();
+        if (npcRef != null && npcRef.isValid()) {
+            try {
+                MarkedEntitySupport markedEntitySupport = npcRef.getStore().getComponent(npcRef, MarkedEntitySupport.getComponentType());
+                if (markedEntitySupport != null) {
+                    markedEntitySupport.setMarkedEntity(MOVE_TARGET_SLOT, null);
+                    if (targetRef != null && targetRef.equals(markedEntitySupport.getMarkedEntityRef(LOCKED_TARGET_SLOT))) {
+                        markedEntitySupport.setMarkedEntity(LOCKED_TARGET_SLOT, null);
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
         if (targetRef == null) {
             return;
         }
@@ -489,6 +563,7 @@ public class PatrolManager {
         }
 
         activeSessions.remove(citizenId);
+        lastSpawnWarningLogMs.remove(citizenId);
         world.execute(() -> {
             cleanupMoveTarget(citizen, world);
             restartPatrolInternal(citizen, world, path, 0, true);
@@ -496,6 +571,7 @@ public class PatrolManager {
     }
 
     public void stopPatrol(@Nonnull String citizenId) {
+        lastSpawnWarningLogMs.remove(citizenId);
         PatrolSession session = activeSessions.remove(citizenId);
         if (session == null && !moveTargets.containsKey(citizenId)) {
             return;
@@ -575,7 +651,11 @@ public class PatrolManager {
             }
         }
 
-        ensureMoveTarget(citizen, world, waypointPosition);
+        Ref<EntityStore> targetRef = ensureMoveTarget(citizen, world, waypointPosition);
+        if (targetRef == null || !targetRef.isValid()) {
+            session.lastSpawnFailureMs = System.currentTimeMillis();
+            session.spawnFailureCount = 1;
+        }
         resetProgressTracking(session, npcPosition, distanceTo(waypointPosition, npcPosition), session.waypointIndex);
     }
 
@@ -707,6 +787,7 @@ public class PatrolManager {
 
     public void onCitizenDespawned(@Nonnull String citizenId) {
         activeSessions.remove(citizenId);
+        lastSpawnWarningLogMs.remove(citizenId);
         Ref<EntityStore> targetRef = moveTargets.remove(citizenId);
         if (targetRef == null || !targetRef.isValid()) return;
 
@@ -729,6 +810,17 @@ public class PatrolManager {
         if (monitorTask != null && !monitorTask.isCancelled()) {
             monitorTask.cancel(false);
         }
+        for (Ref<EntityStore> ref : moveTargets.values()) {
+            if (ref != null && ref.isValid()) {
+                try {
+                    ref.getStore().removeEntity(ref, RemoveReason.REMOVE);
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        moveTargets.clear();
+        activeSessions.clear();
+        lastSpawnWarningLogMs.clear();
     }
 
     private void loadPaths() {
